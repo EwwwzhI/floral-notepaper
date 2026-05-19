@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo.png" width="120" alt="花笺图标">
+  <img src="Docs/images/logo.png" width="120" alt="花笺图标">
 </p>
 
 <h1 align="center">花笺 Floral Notepaper</h1>
