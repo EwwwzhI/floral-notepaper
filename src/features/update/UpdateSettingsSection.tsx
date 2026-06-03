@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { message } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { SlidingButtonGroup } from "../../components/SlidingButtonGroup";
 import {
   cancelUpdate,
   checkForUpdates,
-  clearMirrorCdk,
   downloadUpdate,
+  getMirrorChyanCdk,
   getUpdateSettings,
   getUpdateStatus,
   installUpdate,
   saveUpdateSettings,
-  setMirrorCdk,
+  setMirrorChyanCdk,
 } from "./api";
 import {
   getInitialUpdateStatusNotice,
@@ -22,7 +22,6 @@ import {
 } from "./presentation";
 import { getUpdateErrorCode, getUpdateErrorMessage } from "./updateErrors";
 import type {
-  CheckSourcePreference,
   DownloadSourcePreference,
   DownloadSourceUsed,
   UpdateChannel,
@@ -43,8 +42,6 @@ interface UpdateSettingsSectionProps {
 
 type IntervalOption = string;
 
-const MIRROR_SETTINGS_URL = "https://mirrorchyan.com/zh/projects?source=floral_notepaper_settings";
-
 export function UpdateSettingsSection({
   initialSettings,
   initialStatus,
@@ -55,6 +52,7 @@ export function UpdateSettingsSection({
   const [status, setStatus] = useState<UpdateState | null>(initialStatus ?? null);
   const [downloadProgress, setDownloadProgress] = useState<UpdateDownloadProgress | null>(null);
   const [cdkInput, setCdkInput] = useState("");
+  const [showCdk, setShowCdk] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [notice, setNotice] = useState<UpdateInlineNotice | null>(() =>
     getInitialUpdateStatusNotice(initialStatus, t),
@@ -72,24 +70,6 @@ export function UpdateSettingsSection({
     latestChannelRef.current = settings?.channel ?? status?.channel ?? latestChannelRef.current;
   }, [settings?.channel, status?.channel]);
 
-  const checkSourceOptions = useMemo<Array<{ value: CheckSourcePreference; label: string }>>(
-    () => [
-      {
-        value: "githubFirst",
-        label: t("settings.update.checkSource.github", {
-          defaultValue: "GitHub",
-        }),
-      },
-      {
-        value: "mirrorFirst",
-        label: t("settings.update.checkSource.mirror", {
-          defaultValue: "Mirror酱",
-        }),
-      },
-    ],
-    [t],
-  );
-
   const sourceOptions = useMemo<Array<{ value: DownloadSourcePreference; label: string }>>(
     () => [
       {
@@ -97,22 +77,8 @@ export function UpdateSettingsSection({
         label: t("settings.update.source.github", { defaultValue: "GitHub" }),
       },
       {
-        value: "mirrorFirst",
-        label: t("settings.update.source.mirror", { defaultValue: "Mirror酱" }),
-      },
-    ],
-    [t],
-  );
-
-  const channelOptions = useMemo<Array<{ value: UpdateChannel; label: string }>>(
-    () => [
-      {
-        value: "stable",
-        label: t("settings.update.channel.stable", { defaultValue: "stable" }),
-      },
-      {
-        value: "beta",
-        label: t("settings.update.channel.beta", { defaultValue: "beta" }),
+        value: "mirrorChyanFirst",
+        label: t("settings.update.source.mirrorChyan", { defaultValue: "Mirror酱" }),
       },
     ],
     [t],
@@ -339,61 +305,60 @@ export function UpdateSettingsSection({
     });
   };
 
-  const handleSetCdk = async () => {
-    if (!cdkInput.trim()) {
-      setNotice({
-        tone: "error",
-        text: t("settings.update.error.cdkEmpty", {
-          defaultValue: "Mirror酱 CDK 不能为空",
-        }),
-      });
-      return;
-    }
+  // Auto-save CDK with debounce when the user types a non-empty value.
+  // Flushes on unmount so the CDK is never lost when the user closes
+  // the settings panel before the debounce fires.
+  const cdkSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cdkSavedValue = useRef("");
+  const pendingCdkValue = useRef("");
 
-    setBusyAction("cdk");
-    setNotice(null);
-    try {
-      await setMirrorCdk(cdkInput);
-      const saved = await getUpdateSettings();
-      setSettings(saved);
-      setCdkInput("");
-      setNotice({
-        tone: "success",
-        text: t("settings.update.cdkSaved", {
-          defaultValue: "CDK 已保存到系统安全存储",
-        }),
-      });
-    } catch (error) {
-      setNotice({ tone: "error", text: getUpdateErrorMessage(error, t) });
-    } finally {
-      setBusyAction(null);
-    }
-  };
+  useEffect(() => {
+    pendingCdkValue.current = cdkInput.trim();
+  }, [cdkInput]);
 
-  const handleClearCdk = async () => {
-    const confirmed = window.confirm(
-      t("settings.update.confirmClearCdk", {
-        defaultValue: "确认清除 Mirror酱 CDK？",
-      }),
-    );
-    if (!confirmed) return;
+  useEffect(() => {
+    const value = cdkInput.trim();
+    if (!value || value === cdkSavedValue.current) return;
+    if (cdkSaveTimer.current) clearTimeout(cdkSaveTimer.current);
+    cdkSaveTimer.current = setTimeout(() => {
+      cdkSavedValue.current = value;
+      setBusyAction("cdk");
+      setMirrorChyanCdk(value)
+        .then(() => getUpdateSettings())
+        .then((saved) => setSettings(saved))
+        .catch((error) => setNotice({ tone: "error", text: getUpdateErrorMessage(error, t) }))
+        .finally(() => setBusyAction(null));
+    }, 600);
+    return () => {
+      if (cdkSaveTimer.current) clearTimeout(cdkSaveTimer.current);
+    };
+  }, [cdkInput, t]);
 
-    setBusyAction("cdk");
-    setNotice(null);
-    try {
-      await clearMirrorCdk();
-      const saved = await getUpdateSettings();
-      setSettings(saved);
-      setNotice({
-        tone: "success",
-        text: t("settings.update.cdkCleared", { defaultValue: "CDK 已清除" }),
-      });
-    } catch (error) {
-      setNotice({ tone: "error", text: getUpdateErrorMessage(error, t) });
-    } finally {
-      setBusyAction(null);
-    }
-  };
+  // Flush pending CDK value on unmount so no typed input is lost.
+  useEffect(() => {
+    return () => {
+      const pending = pendingCdkValue.current;
+      if (!pending || pending === cdkSavedValue.current) return;
+      cdkSavedValue.current = pending;
+      setMirrorChyanCdk(pending).catch(() => {});
+    };
+  }, []);
+
+  // When the settings panel opens and a CDK is already saved, fetch the
+  // plaintext from the keyring so the input is pre-filled (masked by the
+  // password field type) and fully editable.
+  useEffect(() => {
+    if (!settings?.hasMirrorChyanCdk) return;
+    let cancelled = false;
+    getMirrorChyanCdk().then((cdk) => {
+      if (cancelled || !cdk) return;
+      setCdkInput(cdk);
+      cdkSavedValue.current = cdk;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings?.hasMirrorChyanCdk]);
 
   const handleCheck = async () => {
     setBusyAction("checking");
@@ -501,10 +466,6 @@ export function UpdateSettingsSection({
     }
   };
 
-  const handleOpenMirror = () => {
-    void openUrl(MIRROR_SETTINGS_URL);
-  };
-
   return (
     <section className="space-y-3 pt-2 border-t border-paper-deep/25">
       {showCheckControls ? (
@@ -606,20 +567,6 @@ export function UpdateSettingsSection({
 
             <div className="space-y-2">
               <label className="block text-[11px] font-body text-ink-faint">
-                {t("settings.update.checkSource.label", {
-                  defaultValue: "检查更新源",
-                })}
-              </label>
-              <SlidingButtonGroup
-                options={checkSourceOptions}
-                value={settings.checkSourcePreference}
-                onChange={(value) => updateSettings("checkSourcePreference", value)}
-                className="grid grid-cols-2"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="block text-[11px] font-body text-ink-faint">
                 {t("settings.update.source.label", { defaultValue: "下载源" })}
               </label>
               <SlidingButtonGroup
@@ -632,91 +579,94 @@ export function UpdateSettingsSection({
 
             <div className="space-y-2">
               <label className="block text-[11px] font-body text-ink-faint">
-                {t("settings.update.mirror.title", {
+                {t("settings.update.mirrorChyan.title", {
                   defaultValue: "Mirror酱",
                 })}
               </label>
-              <div className="flex items-center justify-between h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-                <span className="text-[12px] text-ink-soft">
-                  {t("settings.update.mirror.cdkStatus", {
-                    defaultValue: "CDK",
-                  })}
-                </span>
-                <span className="text-[11px] font-mono text-ink-ghost">
-                  {settings.hasMirrorCdk
-                    ? t("settings.update.mirror.set", {
-                        defaultValue: "已设置",
-                      })
-                    : t("settings.update.mirror.notSet", {
-                        defaultValue: "未设置",
-                      })}
-                </span>
-              </div>
               <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={cdkInput}
-                  onChange={(event) => setCdkInput(event.target.value)}
-                  placeholder={t("settings.update.mirror.placeholder", {
-                    defaultValue: "输入新的 CDK",
-                  })}
-                  className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
-                />
+                <div className="flex-1 relative">
+                  <input
+                    type={showCdk && cdkInput ? "text" : "password"}
+                    value={cdkInput}
+                    onChange={(event) => setCdkInput(event.target.value)}
+                    placeholder={t("settings.update.mirrorChyan.placeholder", {
+                      defaultValue: "点击输入文本",
+                    })}
+                    className="min-w-0 w-full h-8 px-2.5 pr-8 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none focus:border-bamboo/40 focus:bg-paper-warm/90 transition-colors"
+                  />
+                </div>
                 <button
                   type="button"
-                  disabled={busyAction === "cdk" || !cdkInput.trim()}
-                  onClick={() => void handleSetCdk()}
-                  className="h-8 px-2.5 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer whitespace-nowrap"
+                  onClick={() => setShowCdk((prev) => !prev)}
+                  disabled={!cdkInput}
+                  className="h-8 w-8 flex items-center justify-center rounded-lg border border-paper-deep/45 text-ink-ghost hover:text-ink-faint hover:bg-paper-warm disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0"
+                  title={
+                    showCdk
+                      ? t("settings.update.mirrorChyan.hideCdk", {
+                          defaultValue: "隐藏 CDK",
+                        })
+                      : t("settings.update.mirrorChyan.showCdk", {
+                          defaultValue: "显示 CDK",
+                        })
+                  }
                 >
-                  {settings.hasMirrorCdk
-                    ? t("settings.update.mirror.replace", {
-                        defaultValue: "替换",
-                      })
-                    : t("settings.update.mirror.save", {
-                        defaultValue: "保存",
-                      })}
+                  {showCdk ? (
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </svg>
+                  ) : (
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
                 </button>
               </div>
-              <div className="flex gap-2">
+              <p className="text-[10px] text-ink-ghost leading-relaxed">
+                {t("settings.update.mirrorChyan.noCdkHint", {
+                  defaultValue: "没有或者忘记 CDK？",
+                })}{" "}
                 <button
                   type="button"
-                  disabled={busyAction === "cdk" || !settings.hasMirrorCdk}
-                  onClick={() => void handleClearCdk()}
-                  className="h-8 px-2.5 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-red-400 hover:bg-danger-bg disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  onClick={() => void openUrl("https://mirrorchyan.com")}
+                  className="inline-flex items-center gap-0.5 text-ink-faint hover:text-bamboo cursor-pointer transition-colors"
                 >
-                  {t("settings.update.mirror.clear", {
-                    defaultValue: "清除 CDK",
-                  })}
+                  Mirror酱
+                  <svg
+                    className="w-[1em] h-[1em]"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M6 3h7v7M13 3L3 13" />
+                  </svg>
                 </button>
-                <button
-                  type="button"
-                  onClick={handleOpenMirror}
-                  className="h-8 px-2.5 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
-                >
-                  {t("settings.update.mirror.open", {
-                    defaultValue: "打开 Mirror酱页面",
-                  })}
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="block text-[11px] font-body text-ink-faint">
-                {t("settings.update.advanced", { defaultValue: "高级" })}
-              </label>
-              <SlidingButtonGroup
-                options={channelOptions}
-                value={settings.channel}
-                onChange={(value) => updateSettings("channel", value)}
-              />
-              <UpdateToggleRow
-                label={t("settings.update.allowPrerelease", {
-                  defaultValue: "允许预发布版本",
+                {t("settings.update.mirrorChyan.noCdkHintSuffix", {
+                  defaultValue: " 官网即刻获取。",
                 })}
-                checked={settings.allowPrerelease}
-                disabled={controlsDisabled}
-                onChange={(checked) => updateSettings("allowPrerelease", checked)}
-              />
+              </p>
             </div>
           </>
         ) : (
@@ -947,8 +897,8 @@ function getSourceLabel(
   source: DownloadSourceUsed | null | undefined,
   t: ReturnType<typeof useTranslation>["t"],
 ) {
-  if (source === "mirror") {
-    return t("settings.update.source.mirror", { defaultValue: "Mirror" });
+  if (source === "mirrorChyan") {
+    return t("settings.update.source.mirrorChyan", { defaultValue: "MirrorChyan" });
   }
   if (source === "github") {
     return t("settings.update.source.github", { defaultValue: "GitHub" });

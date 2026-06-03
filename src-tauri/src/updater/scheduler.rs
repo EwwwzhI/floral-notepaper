@@ -107,7 +107,7 @@ mod tests {
                 auto_download: false,
                 check_interval_hours,
                 check_source_preference: CheckSourcePreference::GithubFirst,
-                download_source_preference: DownloadSourcePreference::MirrorFirst,
+                download_source_preference: DownloadSourcePreference::MirrorChyanFirst,
                 channel: UpdateChannel::Stable,
                 allow_prerelease: false,
                 last_auto_check_at,

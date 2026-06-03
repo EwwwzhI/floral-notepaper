@@ -13,6 +13,15 @@ use super::{
 use crate::desktop;
 use crate::services::notes::AppError;
 use chrono::Utc;
+
+macro_rules! debug_log {
+    ($($arg:tt)*) => {{
+        if cfg!(debug_assertions) {
+            eprintln!("[update:check] {}", format!($($arg)*));
+        }
+    }};
+}
+
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tauri::{async_runtime, Emitter, Manager, State};
@@ -58,13 +67,21 @@ pub fn update_settings_save(
 }
 
 #[tauri::command]
-pub fn update_mirror_cdk_set(state: State<'_, UpdaterState>, cdk: String) -> Result<(), AppError> {
-    state.set_mirror_cdk(&cdk)
+pub fn update_mirror_chyan_cdk_set(
+    state: State<'_, UpdaterState>,
+    cdk: String,
+) -> Result<(), AppError> {
+    state.set_mirror_chyan_cdk(&cdk)
 }
 
 #[tauri::command]
-pub fn update_mirror_cdk_clear(state: State<'_, UpdaterState>) -> Result<(), AppError> {
-    state.clear_mirror_cdk()
+pub fn update_mirror_chyan_cdk_clear(state: State<'_, UpdaterState>) -> Result<(), AppError> {
+    state.clear_mirror_chyan_cdk()
+}
+
+#[tauri::command]
+pub fn update_mirror_chyan_cdk_get(state: State<'_, UpdaterState>) -> Option<String> {
+    state.get_mirror_chyan_cdk()
 }
 
 #[tauri::command]
@@ -73,12 +90,14 @@ pub async fn update_check(
     state: State<'_, UpdaterState>,
     manual: bool,
 ) -> Result<UpdateCheckResult, AppError> {
+    debug_log!("收到检查请求 manual={manual}");
     let task = state.begin_task(UpdateTaskKind::Check)?;
     let paths = state.paths().clone();
     let result_paths = paths.clone();
     let current_version = state.current_version().to_string();
     let emit_version = current_version.clone();
-    let cdk = state.get_mirror_cdk();
+    let cdk = state.get_mirror_chyan_cdk();
+    debug_log!("CDK 已加载 has_cdk={}", cdk.is_some());
 
     let prepare_paths = paths.clone();
     let prepare_version = current_version.clone();
@@ -92,6 +111,7 @@ pub async fn update_check(
             format!("准备检查更新任务失败：{error}"),
         )
     })??;
+    debug_log!("发出 update://checking");
     app.emit_checking(&checking_state);
 
     let result = async_runtime::spawn_blocking(move || {
@@ -124,7 +144,7 @@ pub async fn update_download(
     let result_paths = paths.clone();
     let current_version = state.current_version().to_string();
     let app_handle = app.clone();
-    let cdk = state.get_mirror_cdk();
+    let cdk = state.get_mirror_chyan_cdk();
 
     let result = async_runtime::spawn_blocking(move || {
         let _task = task;
@@ -264,14 +284,14 @@ pub(crate) fn run_automatic_update_check(
 ) -> Result<UpdateCheckResult, AppError> {
     let (task, paths) = prepare_update_check(&app, state)?;
     let _task = task;
-    let cdk = state.get_mirror_cdk();
+    let cdk = state.get_mirror_chyan_cdk();
     let result = run_update_check_blocking(&paths, false, state.current_version(), cdk);
     finalize_update_check(&app, &paths, false, state.current_version(), result)
 }
 
 fn parse_download_source(source: &str) -> Result<DownloadSourceUsed, AppError> {
     match source.trim() {
-        "mirror" => Ok(DownloadSourceUsed::Mirror),
+        "mirrorChyan" => Ok(DownloadSourceUsed::MirrorChyan),
         "github" => Ok(DownloadSourceUsed::Github),
         _ => Err(errors::with_detail(
             errors::app_error("updateDownloadSourceInvalid", "无效的下载源参数"),
@@ -307,18 +327,32 @@ trait UpdateCheckEmitter {
 
 impl UpdateCheckEmitter for tauri::AppHandle {
     fn emit_checking(&self, state: &UpdateStateDto) {
+        debug_log!(
+            "emit update://checking current_version={}",
+            state.current_version
+        );
         if let Err(error) = self.emit("update://checking", state) {
             eprintln!("failed to emit update://checking: {error}");
         }
     }
 
     fn emit_checked(&self, state: &UpdateStateDto) {
+        debug_log!(
+            "emit update://checked status={:?} latest_version={:?}",
+            state.status,
+            state.latest_version
+        );
         if let Err(error) = self.emit("update://checked", state) {
             eprintln!("failed to emit update://checked: {error}");
         }
     }
 
     fn emit_error(&self, error: &UpdateErrorDto) {
+        debug_log!(
+            "emit update://error code={} message={}",
+            error.code,
+            error.message
+        );
         if let Err(emit_error) = self.emit("update://error", error) {
             eprintln!("failed to emit update://error: {emit_error}");
         }
@@ -499,6 +533,7 @@ fn finalize_update_check<E: UpdateCheckEmitter>(
     result: Result<UpdateCheckResult, AppError>,
 ) -> Result<UpdateCheckResult, AppError> {
     if let Ok(next_state) = super::state::load_with_current_version(paths, current_version) {
+        debug_log!("发出 update://checked status={:?}", next_state.status);
         emitter.emit_checked(&next_state);
     }
 
@@ -516,6 +551,7 @@ fn finalize_update_check<E: UpdateCheckEmitter>(
                     )
                 });
             if manual {
+                debug_log!("发出 update://error code={}", error_payload.code);
                 emitter.emit_error(&error_payload);
             }
             Err(error)

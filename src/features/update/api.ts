@@ -51,10 +51,14 @@ export function saveUpdateSettings(settings: UpdateSettings): Promise<UpdateSett
   return invoke("update_settings_save", { settings });
 }
 
-export function setMirrorCdk(cdk: string): Promise<void> {
-  return invoke("update_mirror_cdk_set", { cdk });
+export function setMirrorChyanCdk(cdk: string): Promise<void> {
+  return invoke("update_mirror_chyan_cdk_set", { cdk });
 }
 
-export function clearMirrorCdk(): Promise<void> {
-  return invoke("update_mirror_cdk_clear");
+export function getMirrorChyanCdk(): Promise<string | null> {
+  return invoke("update_mirror_chyan_cdk_get");
+}
+
+export function clearMirrorChyanCdk(): Promise<void> {
+  return invoke("update_mirror_chyan_cdk_clear");
 }

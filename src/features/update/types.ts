@@ -1,8 +1,8 @@
-export type CheckSourcePreference = "mirrorFirst" | "githubFirst";
+export type CheckSourcePreference = "mirrorChyanFirst" | "githubFirst";
 
-export type DownloadSourcePreference = "mirrorFirst" | "githubFirst";
+export type DownloadSourcePreference = "mirrorChyanFirst" | "githubFirst";
 
-export type DownloadSourceUsed = "mirror" | "github";
+export type DownloadSourceUsed = "mirrorChyan" | "github";
 
 export type UpdateChannel = "stable" | "beta";
 
@@ -29,7 +29,8 @@ export interface UpdateSettings {
   channel: UpdateChannel;
   allowPrerelease: boolean;
   lastAutoCheckAt?: string | null;
-  hasMirrorCdk: boolean;
+  hasMirrorChyanCdk: boolean;
+  mirrorChyanCdkLength?: number | null;
 }
 
 export interface UpdateErrorPayload {
@@ -65,7 +66,7 @@ export interface UpdateCheckResult {
   latestVersion?: string | null;
   releaseNotes?: string | null;
   mandatory: boolean;
-  canDownloadFromMirror: boolean;
+  canDownloadFromMirrorChyan: boolean;
   canDownloadFromGithub: boolean;
   recommendedSource?: DownloadSourceUsed | null;
   assetUrl?: string | null;

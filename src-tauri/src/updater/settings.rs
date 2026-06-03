@@ -52,7 +52,11 @@ impl StoredUpdateSettings {
         next
     }
 
-    pub fn into_dto(self, has_mirror_cdk: bool) -> UpdateSettingsDto {
+    pub fn into_dto(
+        self,
+        has_mirror_chyan_cdk: bool,
+        mirror_chyan_cdk_length: Option<u32>,
+    ) -> UpdateSettingsDto {
         UpdateSettingsDto {
             auto_check: self.auto_check,
             auto_download: self.auto_download,
@@ -62,7 +66,8 @@ impl StoredUpdateSettings {
             channel: self.channel,
             allow_prerelease: self.allow_prerelease,
             last_auto_check_at: self.last_auto_check_at,
-            has_mirror_cdk,
+            has_mirror_chyan_cdk,
+            mirror_chyan_cdk_length,
         }
     }
 }
@@ -73,8 +78,8 @@ impl Default for StoredUpdateSettings {
             auto_check: true,
             auto_download: false,
             check_interval_hours: 24,
-            check_source_preference: CheckSourcePreference::GithubFirst,
-            download_source_preference: DownloadSourcePreference::MirrorFirst,
+            check_source_preference: CheckSourcePreference::MirrorChyanFirst,
+            download_source_preference: DownloadSourcePreference::MirrorChyanFirst,
             channel: UpdateChannel::Stable,
             allow_prerelease: false,
             last_auto_check_at: None,
@@ -162,11 +167,11 @@ mod tests {
         assert_eq!(settings.check_interval_hours, 24);
         assert_eq!(
             settings.check_source_preference,
-            CheckSourcePreference::GithubFirst
+            CheckSourcePreference::MirrorChyanFirst
         );
         assert_eq!(
             settings.download_source_preference,
-            DownloadSourcePreference::MirrorFirst
+            DownloadSourcePreference::MirrorChyanFirst
         );
         assert!(paths.settings_path().exists());
     }
@@ -178,19 +183,20 @@ mod tests {
             auto_check: false,
             auto_download: true,
             check_interval_hours: 168,
-            check_source_preference: CheckSourcePreference::GithubFirst,
+            check_source_preference: CheckSourcePreference::MirrorChyanFirst,
             download_source_preference: DownloadSourcePreference::GithubFirst,
             channel: UpdateChannel::Beta,
             allow_prerelease: true,
             last_auto_check_at: None,
-            has_mirror_cdk: true,
+            has_mirror_chyan_cdk: true,
+            mirror_chyan_cdk_length: None,
         });
 
         save(&paths, &settings).expect("save settings");
         let raw = fs::read_to_string(paths.settings_path()).expect("read settings file");
         let loaded = load(&paths).expect("load saved settings");
 
-        assert!(!raw.contains("hasMirrorCdk"));
+        assert!(!raw.contains("hasMirrorChyanCdk"));
         assert_eq!(loaded, settings);
     }
 
@@ -206,12 +212,13 @@ mod tests {
                 auto_check: false,
                 auto_download: true,
                 check_interval_hours: 168,
-                check_source_preference: CheckSourcePreference::MirrorFirst,
+                check_source_preference: CheckSourcePreference::MirrorChyanFirst,
                 download_source_preference: DownloadSourcePreference::GithubFirst,
                 channel: UpdateChannel::Beta,
                 allow_prerelease: true,
                 last_auto_check_at: None,
-                has_mirror_cdk: false,
+                has_mirror_chyan_cdk: false,
+                mirror_chyan_cdk_length: None,
             },
         );
 

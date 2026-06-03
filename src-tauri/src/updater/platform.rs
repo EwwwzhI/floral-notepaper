@@ -51,6 +51,20 @@ impl PlatformInfo {
             return Err(errors::unsupported_platform());
         }
 
+        // When running via `npm run tauri dev` the binary sits inside
+        // target/debug/ (or target/debug/deps/) rather than inside an app
+        // bundle, so `detect_install_kind` returns `Unknown`.  Allow the
+        // check-update flow to proceed in this case so the feature can be
+        // tested during development.
+        if self.install_kind == InstallKind::Unknown {
+            if let Some(path) = &self.current_exe {
+                let lower = path.to_lowercase();
+                if lower.contains("target/debug") || lower.contains("target\\debug") {
+                    return Ok(());
+                }
+            }
+        }
+
         match self.install_kind {
             InstallKind::WindowsNsis | InstallKind::MacosAppBundle => Ok(()),
             InstallKind::WindowsPortable => Err(errors::portable_manual_only()),

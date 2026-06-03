@@ -20,13 +20,21 @@ use std::{
     time::Duration,
 };
 
-const MIRROR_MANIFEST_PATH_ENV: &str = "FLORAL_NOTEPAPER_UPDATE_MIRROR_MANIFEST_PATH";
+const MIRROR_CHYAN_MANIFEST_PATH_ENV: &str = "FLORAL_NOTEPAPER_UPDATE_MIRROR_MANIFEST_PATH";
 const GITHUB_MANIFEST_PATH_ENV: &str = "FLORAL_NOTEPAPER_UPDATE_GITHUB_MANIFEST_PATH";
 const GITHUB_REPO_ENV: &str = "FLORAL_NOTEPAPER_UPDATE_GITHUB_REPO";
 const DEFAULT_GITHUB_REPO: &str = "Achilng/floral-notepaper";
-const MIRROR_API_BASE: &str = "https://mirrorchyan.com/api/resources";
-const MIRROR_RES_ID: &str = "floral";
-const MIRROR_USER_AGENT: &str = "floral_notepaper";
+const MIRROR_CHYAN_API_BASE: &str = "https://mirrorchyan.com/api/resources";
+const MIRROR_CHYAN_RES_ID: &str = "floral";
+const MIRROR_CHYAN_USER_AGENT: &str = "floral_notepaper";
+
+macro_rules! debug_log {
+    ($($arg:tt)*) => {{
+        if cfg!(debug_assertions) {
+            eprintln!("[update:check] {}", format!($($arg)*));
+        }
+    }};
+}
 
 #[derive(Debug, Clone)]
 struct UpdateCheckContext {
@@ -53,12 +61,12 @@ struct UpdateCandidate {
     asset_sha256: Option<String>,
     asset_size: u64,
     asset_url: Option<String>,
-    mirror_asset_url: Option<String>,
+    mirror_chyan_asset_url: Option<String>,
     github_asset_url: Option<String>,
-    can_download_from_mirror: bool,
+    can_download_from_mirror_chyan: bool,
     can_download_from_github: bool,
     /// Whether SHA-256 hash verification is enabled for this candidate.
-    /// Set to `false` for Mirror source because the Mirror API does not
+    /// Set to `false` for MirrorChyan source because the MirrorChyan API does not
     /// return asset checksums in its response.
     ///
     /// This field is consumed at the candidate-construction site for clarity
@@ -71,13 +79,13 @@ struct UpdateCandidate {
 impl UpdateCandidate {
     fn asset_url_for_source(&self, source: Option<&DownloadSourceUsed>) -> Option<String> {
         match source {
-            Some(DownloadSourceUsed::Mirror) => self.mirror_asset_url.clone(),
+            Some(DownloadSourceUsed::MirrorChyan) => self.mirror_chyan_asset_url.clone(),
             Some(DownloadSourceUsed::Github) => self.github_asset_url.clone(),
             None => None,
         }
         .or_else(|| self.asset_url.clone())
         .or_else(|| self.github_asset_url.clone())
-        .or_else(|| self.mirror_asset_url.clone())
+        .or_else(|| self.mirror_chyan_asset_url.clone())
     }
 }
 
@@ -97,16 +105,16 @@ trait UpdateCheckProvider {
 }
 
 #[derive(Debug, Clone, Default)]
-struct MirrorProvider {
+struct MirrorChyanProvider {
     manifest_path: Option<PathBuf>,
     cdk: Option<String>,
     offline: bool,
 }
 
-impl MirrorProvider {
+impl MirrorChyanProvider {
     pub fn from_env() -> Self {
         Self {
-            manifest_path: env_manifest_path(MIRROR_MANIFEST_PATH_ENV),
+            manifest_path: env_manifest_path(MIRROR_CHYAN_MANIFEST_PATH_ENV),
             cdk: None,
             offline: env::var("FLORAL_NOTEPAPER_UPDATE_OFFLINE").is_ok(),
         }
@@ -136,9 +144,9 @@ impl MirrorProvider {
     }
 }
 
-impl UpdateCheckProvider for MirrorProvider {
+impl UpdateCheckProvider for MirrorChyanProvider {
     fn label(&self) -> &'static str {
-        "Mirror"
+        "MirrorChyan"
     }
 
     fn check(
@@ -152,7 +160,7 @@ impl UpdateCheckProvider for MirrorProvider {
         if self.offline {
             return Err(errors::provider_not_configured(self.label()));
         }
-        check_mirror_api(context, priority, self.cdk.as_deref())
+        check_mirror_chyan_api(context, priority, self.cdk.as_deref())
     }
 }
 
@@ -211,7 +219,7 @@ impl UpdateCheckProvider for GithubProvider {
 
 #[derive(Debug, Clone)]
 pub(crate) struct UpdateCheckService {
-    mirror: MirrorProvider,
+    mirror_chyan: MirrorChyanProvider,
     github: GithubProvider,
     platform_override: Option<PlatformInfo>,
 }
@@ -219,14 +227,14 @@ pub(crate) struct UpdateCheckService {
 impl UpdateCheckService {
     pub(crate) fn from_env() -> Self {
         Self {
-            mirror: MirrorProvider::from_env(),
+            mirror_chyan: MirrorChyanProvider::from_env(),
             github: GithubProvider::from_env(),
             platform_override: None,
         }
     }
 
     pub(crate) fn with_cdk(mut self, cdk: Option<String>) -> Self {
-        self.mirror = self.mirror.with_cdk(cdk);
+        self.mirror_chyan = self.mirror_chyan.with_cdk(cdk);
         self
     }
 
@@ -236,7 +244,13 @@ impl UpdateCheckService {
         _manual: bool,
         current_version: &str,
     ) -> Result<UpdateCheckResult, AppError> {
+        debug_log!("开始检查更新 当前版本=v{current_version}");
         let settings = settings::load(paths)?;
+        debug_log!(
+            "更新设置已加载 channel={:?} allow_prerelease={}",
+            settings.channel,
+            settings.allow_prerelease
+        );
         let previous_state = state::load_with_current_version(paths, current_version)?;
         let context = UpdateCheckContext {
             platform: self.current_platform(current_version),
@@ -247,6 +261,12 @@ impl UpdateCheckService {
             ),
             previous_state,
         };
+        debug_log!(
+            "平台检查 os={:?} arch={:?} install_kind={:?}",
+            context.platform.os,
+            context.platform.arch,
+            context.platform.install_kind
+        );
         if let Err(error) = context.platform.ensure_in_app_updates_supported() {
             persist_last_auto_check_at(paths, &settings)?;
             state::save(paths, &failed_state(&context, &settings, &error))?;
@@ -256,11 +276,17 @@ impl UpdateCheckService {
         let outcome = self.evaluate(&settings, &context);
         match outcome {
             Ok((result, next_state)) => {
+                debug_log!(
+                    "检查完成 status={:?} latest_version={:?}",
+                    result.status,
+                    result.latest_version
+                );
                 persist_last_auto_check_at(paths, &settings)?;
                 state::save(paths, &next_state)?;
                 Ok(result)
             }
             Err(error) => {
+                debug_log!("检查失败 code={} message={}", error.code, error.message);
                 persist_last_auto_check_at(paths, &settings)?;
                 state::save(paths, &failed_state(&context, &settings, &error))?;
                 Err(error)
@@ -269,9 +295,9 @@ impl UpdateCheckService {
     }
 
     #[cfg(test)]
-    fn with_providers(mirror: MirrorProvider, github: GithubProvider) -> Self {
+    fn with_providers(mirror_chyan: MirrorChyanProvider, github: GithubProvider) -> Self {
         Self {
-            mirror,
+            mirror_chyan,
             github,
             platform_override: None,
         }
@@ -279,12 +305,12 @@ impl UpdateCheckService {
 
     #[cfg(test)]
     fn with_providers_and_platform(
-        mirror: MirrorProvider,
+        mirror_chyan: MirrorChyanProvider,
         github: GithubProvider,
         platform: PlatformInfo,
     ) -> Self {
         Self {
-            mirror,
+            mirror_chyan,
             github,
             platform_override: Some(platform),
         }
@@ -302,27 +328,61 @@ impl UpdateCheckService {
         context: &UpdateCheckContext,
     ) -> Result<(UpdateCheckResult, UpdateStateDto), AppError> {
         let provider_order = check_provider_order(&settings.check_source_preference);
+        debug_log!(
+            "提供者检查顺序={:?} 检查源偏好={:?}",
+            provider_order,
+            settings.check_source_preference
+        );
         let mut available = Vec::new();
         let mut saw_not_available = false;
         let mut provider_errors = Vec::new();
 
         for (priority, source) in provider_order.into_iter().enumerate() {
+            debug_log!("尝试提供者 source={source:?} priority={priority}");
             let provider_result = match source {
-                DownloadSourceUsed::Mirror => self.mirror.check(context, priority),
+                DownloadSourceUsed::MirrorChyan => self.mirror_chyan.check(context, priority),
                 DownloadSourceUsed::Github => self.github.check(context, priority),
             };
 
             match provider_result {
-                Ok(ProviderCheck::Available(candidate)) => available.push(*candidate),
-                Ok(ProviderCheck::NotAvailable) => saw_not_available = true,
-                Err(error) => provider_errors.push(error),
+                Ok(ProviderCheck::Available(candidate)) => {
+                    debug_log!("提供者 {source:?} 返回可用版本={}", candidate.version);
+                    available.push(*candidate);
+                }
+                Ok(ProviderCheck::NotAvailable) => {
+                    debug_log!("提供者 {source:?} 返回无更新");
+                    saw_not_available = true;
+                    // Mirror 酱返回无更新说明当前已是最新版，无需再查 GitHub。
+                    if matches!(source, DownloadSourceUsed::MirrorChyan) {
+                        debug_log!("Mirror 酱已确认无更新，跳过后续提供者");
+                        break;
+                    }
+                }
+                Err(error) => {
+                    debug_log!(
+                        "提供者 {source:?} 返回错误 code={} message={}",
+                        error.code,
+                        error.message
+                    );
+                    provider_errors.push(error);
+                }
             }
         }
 
+        debug_log!("可用候选数={}", available.len());
         if let Some(candidate) = merge_candidates(available) {
+            debug_log!(
+                "合并后版本={} 推荐源={:?}",
+                candidate.version,
+                recommended_source(
+                    &settings.download_source_preference,
+                    candidate.can_download_from_mirror_chyan,
+                    candidate.can_download_from_github,
+                )
+            );
             let recommended_source = recommended_source(
                 &settings.download_source_preference,
-                candidate.can_download_from_mirror,
+                candidate.can_download_from_mirror_chyan,
                 candidate.can_download_from_github,
             );
             let asset_url = candidate.asset_url_for_source(recommended_source.as_ref());
@@ -332,7 +392,7 @@ impl UpdateCheckService {
                 latest_version: Some(candidate.version.clone()),
                 release_notes: candidate.release_notes.clone(),
                 mandatory: candidate.mandatory,
-                can_download_from_mirror: candidate.can_download_from_mirror,
+                can_download_from_mirror_chyan: candidate.can_download_from_mirror_chyan,
                 can_download_from_github: candidate.can_download_from_github,
                 recommended_source: recommended_source.clone(),
                 asset_url: asset_url.clone(),
@@ -366,7 +426,7 @@ impl UpdateCheckService {
                 latest_version: None,
                 release_notes: None,
                 mandatory: false,
-                can_download_from_mirror: false,
+                can_download_from_mirror_chyan: false,
                 can_download_from_github: false,
                 recommended_source: None,
                 asset_url: None,
@@ -415,14 +475,14 @@ fn github_repo() -> String {
 // --- Mirror酱 API ---
 
 #[derive(Debug, Deserialize)]
-struct MirrorApiResponse {
+struct MirrorChyanApiResponse {
     code: i32,
     msg: String,
-    data: Option<MirrorApiData>,
+    data: Option<MirrorChyanApiData>,
 }
 
 #[derive(Debug, Deserialize)]
-struct MirrorApiData {
+struct MirrorChyanApiData {
     version_name: String,
     #[allow(dead_code)]
     version_number: Option<u64>,
@@ -436,7 +496,7 @@ struct MirrorApiData {
     url: Option<String>,
 }
 
-fn mirror_os_param(os: &platform::Os) -> &'static str {
+fn mirror_chyan_os_param(os: &platform::Os) -> &'static str {
     match os {
         platform::Os::Windows => "windows",
         platform::Os::Macos => "darwin",
@@ -444,7 +504,7 @@ fn mirror_os_param(os: &platform::Os) -> &'static str {
     }
 }
 
-fn mirror_arch_param(arch: &platform::Arch) -> &'static str {
+fn mirror_chyan_arch_param(arch: &platform::Arch) -> &'static str {
     match arch {
         platform::Arch::X86_64 => "amd64",
         platform::Arch::Aarch64 => "arm64",
@@ -452,20 +512,20 @@ fn mirror_arch_param(arch: &platform::Arch) -> &'static str {
     }
 }
 
-fn build_mirror_api_client() -> Result<Client, AppError> {
+fn build_mirror_chyan_api_client() -> Result<Client, AppError> {
     Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(15))
         .user_agent("floral-notepaper-updater")
         .build()
-        .map_err(|error| errors::mirror_api_error(format!("无法创建 HTTP 客户端：{error}")))
+        .map_err(|error| errors::mirror_chyan_api_error(format!("无法创建 HTTP 客户端：{error}")))
 }
 
-fn mirror_request_error(error: reqwest::Error) -> AppError {
-    errors::mirror_api_error(mirror_request_error_message(&error))
+fn mirror_chyan_request_error(error: reqwest::Error) -> AppError {
+    errors::mirror_chyan_api_error(mirror_chyan_request_error_message(&error))
 }
 
-fn mirror_request_error_message(error: &reqwest::Error) -> String {
+fn mirror_chyan_request_error_message(error: &reqwest::Error) -> String {
     if error.is_timeout() {
         return "请求超时".into();
     }
@@ -481,47 +541,49 @@ fn mirror_request_error_message(error: &reqwest::Error) -> String {
     "请求失败".into()
 }
 
-/// Common Mirror API call: URL construction, HTTP request, JSON parsing,
-/// and Mirror error-code handling.  Returns [`MirrorApiData`] on success.
-fn call_mirror_api(
+/// Common MirrorChyan API call: URL construction, HTTP request, JSON parsing,
+/// and MirrorChyan error-code handling.  Returns [`MirrorChyanApiData`] on success.
+fn call_mirror_chyan_api(
     current_version: &str,
     os: &str,
     arch: &str,
     cdk: Option<&str>,
-) -> Result<MirrorApiData, AppError> {
-    let mut url = reqwest::Url::parse(&format!("{MIRROR_API_BASE}/{MIRROR_RES_ID}/latest"))
-        .map_err(|e| errors::mirror_api_error(format!("URL 构建失败：{e}")))?;
+) -> Result<MirrorChyanApiData, AppError> {
+    let mut url = reqwest::Url::parse(&format!(
+        "{MIRROR_CHYAN_API_BASE}/{MIRROR_CHYAN_RES_ID}/latest"
+    ))
+    .map_err(|e| errors::mirror_chyan_api_error(format!("URL 构建失败：{e}")))?;
     url.query_pairs_mut()
         .append_pair("current_version", current_version)
         .append_pair("os", os)
         .append_pair("arch", arch)
-        .append_pair("user_agent", MIRROR_USER_AGENT);
+        .append_pair("user_agent", MIRROR_CHYAN_USER_AGENT);
     if let Some(cdk) = cdk.filter(|s| !s.trim().is_empty()) {
         url.query_pairs_mut().append_pair("cdk", cdk);
     }
 
-    let client = build_mirror_api_client()?;
-    let response = client.get(url).send().map_err(mirror_request_error)?;
+    let client = build_mirror_chyan_api_client()?;
+    let response = client.get(url).send().map_err(mirror_chyan_request_error)?;
 
     let status = response.status();
     if !status.is_success() && status.as_u16() != 403 {
-        return Err(errors::mirror_api_error(format!(
+        return Err(errors::mirror_chyan_api_error(format!(
             "HTTP {}",
             status.as_u16()
         )));
     }
 
     let body = response.text().map_err(|error| {
-        errors::mirror_api_error(format!(
+        errors::mirror_chyan_api_error(format!(
             "响应读取失败：{}",
-            mirror_request_error_message(&error)
+            mirror_chyan_request_error_message(&error)
         ))
     })?;
-    let api_response: MirrorApiResponse = serde_json::from_str(&body)
-        .map_err(|error| errors::mirror_api_error(format!("响应解析失败：{error}")))?;
+    let api_response: MirrorChyanApiResponse = serde_json::from_str(&body)
+        .map_err(|error| errors::mirror_chyan_api_error(format!("响应解析失败：{error}")))?;
 
     if api_response.code < 0 {
-        return Err(errors::mirror_api_error(format!(
+        return Err(errors::mirror_chyan_api_error(format!(
             "服务端错误 (code={})：{}",
             api_response.code, api_response.msg
         )));
@@ -530,26 +592,35 @@ fn call_mirror_api(
     if api_response.code > 0 {
         let code = api_response.code;
         return Err(match code {
-            7001..=7005 => errors::mirror_cdk_error(code, api_response.msg),
-            _ => errors::mirror_resource_error(code, api_response.msg),
+            7001..=7005 => errors::mirror_chyan_cdk_error(code, api_response.msg),
+            _ => errors::mirror_chyan_resource_error(code, api_response.msg),
         });
     }
 
     api_response
         .data
-        .ok_or_else(|| errors::mirror_api_error("响应缺少 data 字段"))
+        .ok_or_else(|| errors::mirror_chyan_api_error("响应缺少 data 字段"))
 }
 
-fn check_mirror_api(
+fn check_mirror_chyan_api(
     context: &UpdateCheckContext,
     priority: usize,
     cdk: Option<&str>,
 ) -> Result<ProviderCheck, AppError> {
-    let os = mirror_os_param(&context.platform.os);
-    let arch = mirror_arch_param(&context.platform.arch);
+    let os = mirror_chyan_os_param(&context.platform.os);
+    let arch = mirror_chyan_arch_param(&context.platform.arch);
     let current_version = format!("v{}", context.current_version_text());
+    debug_log!(
+        "MirrorChyan API 请求 os={os} arch={arch} current={current_version} has_cdk={}",
+        cdk.is_some()
+    );
 
-    let data = call_mirror_api(&current_version, os, arch, cdk)?;
+    let data = call_mirror_chyan_api(&current_version, os, arch, cdk)?;
+    debug_log!(
+        "MirrorChyan API 返回 version={} has_url={}",
+        data.version_name,
+        data.url.is_some()
+    );
 
     let version_str = data
         .version_name
@@ -565,13 +636,13 @@ fn check_mirror_api(
         return Ok(ProviderCheck::NotAvailable);
     }
 
-    let mirror_asset_url = data.url;
-    let has_url = mirror_asset_url.is_some();
-    // Mirror API does not provide asset SHA-256 checksums in its response,
-    // so hash verification is explicitly disabled for Mirror-sourced downloads.
+    let mirror_chyan_asset_url = data.url;
+    let has_url = mirror_chyan_asset_url.is_some();
+    // MirrorChyan API does not provide asset SHA-256 checksums in its response,
+    // so hash verification is explicitly disabled for MirrorChyan-sourced downloads.
     eprintln!(
-        "[update] Mirror API response does not include SHA-256 checksum; \
-         verification disabled for Mirror source downloads"
+        "[update] MirrorChyan API response does not include SHA-256 checksum; \
+         verification disabled for MirrorChyan source downloads"
     );
     Ok(ProviderCheck::Available(Box::new(UpdateCandidate {
         priority,
@@ -582,39 +653,39 @@ fn check_mirror_api(
         asset_name: format!("floral-notepaper_{version_str}_{os}_{arch}.zip"),
         asset_sha256: None,
         asset_size: 0,
-        asset_url: mirror_asset_url.clone(),
-        mirror_asset_url,
+        asset_url: mirror_chyan_asset_url.clone(),
+        mirror_chyan_asset_url,
         github_asset_url: None,
-        can_download_from_mirror: has_url,
+        can_download_from_mirror_chyan: has_url,
         can_download_from_github: false,
         sha256_verification_enabled: false,
     })))
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct MirrorDownloadInfo {
+pub(crate) struct MirrorChyanDownloadInfo {
     pub url: String,
 }
 
-pub(crate) fn fetch_mirror_download_url(
+pub(crate) fn fetch_mirror_chyan_download_url(
     platform: &PlatformInfo,
     current_version: &str,
     cdk: Option<&str>,
-) -> Result<MirrorDownloadInfo, AppError> {
-    let os = mirror_os_param(&platform.os);
-    let arch = mirror_arch_param(&platform.arch);
+) -> Result<MirrorChyanDownloadInfo, AppError> {
+    let os = mirror_chyan_os_param(&platform.os);
+    let arch = mirror_chyan_arch_param(&platform.arch);
     let version = format!("v{current_version}");
 
-    let data = call_mirror_api(&version, os, arch, cdk)?;
+    let data = call_mirror_chyan_api(&version, os, arch, cdk)?;
 
     let download_url = data.url.ok_or_else(|| {
         errors::app_error(
-            "updateMirrorDownloadNeedCdk",
+            "updateMirrorChyanDownloadNeedCdk",
             "Mirror酱未返回下载链接，请配置有效的 CDK",
         )
     })?;
 
-    Ok(MirrorDownloadInfo { url: download_url })
+    Ok(MirrorChyanDownloadInfo { url: download_url })
 }
 
 fn build_github_api_client() -> Result<Client, AppError> {
@@ -745,6 +816,7 @@ fn check_github_api(
     context: &UpdateCheckContext,
     priority: usize,
 ) -> Result<ProviderCheck, AppError> {
+    debug_log!("GitHub API 请求 latest release");
     let release = fetch_latest_github_release()?;
 
     let version_str = release
@@ -752,6 +824,11 @@ fn check_github_api(
         .trim_start_matches('v')
         .trim_start_matches('V');
     let normalized_version = version::normalize_version(version_str)?;
+    debug_log!(
+        "GitHub Release tag={} assets数={}",
+        release.tag_name,
+        release.assets.len()
+    );
 
     if !version::is_newer_version(
         &context.current_version,
@@ -802,9 +879,9 @@ fn check_github_api(
         asset_sha256: None,
         asset_size: matched.size,
         asset_url: Some(matched.url.clone()),
-        mirror_asset_url: None,
+        mirror_chyan_asset_url: None,
         github_asset_url: Some(matched.url),
-        can_download_from_mirror: false,
+        can_download_from_mirror_chyan: false,
         can_download_from_github: true,
         sha256_verification_enabled: true,
     })))
@@ -840,7 +917,7 @@ fn load_manifest_candidate(
     manifest_path: &Path,
     context: &UpdateCheckContext,
     priority: usize,
-    is_mirror_provider: bool,
+    is_mirror_chyan_provider: bool,
 ) -> Result<ProviderCheck, AppError> {
     let manifest_bytes = fs::read(manifest_path).map_err(|error| {
         let error = errors::with_detail(
@@ -868,12 +945,12 @@ fn load_manifest_candidate(
         return Ok(ProviderCheck::NotAvailable);
     }
 
-    let mirror_asset_url = asset.mirror_url.clone();
+    let mirror_chyan_asset_url = asset.mirror_chyan_url.clone();
     let github_asset_url = (!asset.github_url.trim().is_empty()).then(|| asset.github_url.clone());
-    let has_mirror_url = mirror_asset_url.is_some();
+    let has_mirror_chyan_url = mirror_chyan_asset_url.is_some();
     let has_github_url = github_asset_url.is_some();
-    let asset_url = if is_mirror_provider {
-        mirror_asset_url
+    let asset_url = if is_mirror_chyan_provider {
+        mirror_chyan_asset_url
             .clone()
             .or_else(|| github_asset_url.clone())
     } else {
@@ -890,9 +967,9 @@ fn load_manifest_candidate(
         asset_sha256: Some(asset.sha256),
         asset_size: asset.size,
         asset_url,
-        mirror_asset_url,
+        mirror_chyan_asset_url,
         github_asset_url,
-        can_download_from_mirror: has_mirror_url,
+        can_download_from_mirror_chyan: has_mirror_chyan_url,
         can_download_from_github: has_github_url,
         sha256_verification_enabled: true,
     })))
@@ -900,16 +977,17 @@ fn load_manifest_candidate(
 
 fn check_provider_order(preference: &CheckSourcePreference) -> Vec<DownloadSourceUsed> {
     match preference {
-        CheckSourcePreference::MirrorFirst => {
-            vec![DownloadSourceUsed::Mirror, DownloadSourceUsed::Github]
+        CheckSourcePreference::MirrorChyanFirst => {
+            vec![DownloadSourceUsed::MirrorChyan, DownloadSourceUsed::Github]
         }
         CheckSourcePreference::GithubFirst => {
-            vec![DownloadSourceUsed::Github, DownloadSourceUsed::Mirror]
+            vec![DownloadSourceUsed::Github, DownloadSourceUsed::MirrorChyan]
         }
     }
 }
 
 fn merge_candidates(mut candidates: Vec<UpdateCandidate>) -> Option<UpdateCandidate> {
+    debug_log!("合并候选版本 候选数={}", candidates.len());
     if candidates.is_empty() {
         return None;
     }
@@ -931,9 +1009,9 @@ fn merge_candidates(mut candidates: Vec<UpdateCandidate>) -> Option<UpdateCandid
     let mut primary = matching_candidates.remove(0);
     let fallback_candidates = matching_candidates;
 
-    primary.can_download_from_mirror |= fallback_candidates
+    primary.can_download_from_mirror_chyan |= fallback_candidates
         .iter()
-        .any(|candidate| candidate.can_download_from_mirror);
+        .any(|candidate| candidate.can_download_from_mirror_chyan);
     primary.can_download_from_github |= fallback_candidates
         .iter()
         .any(|candidate| candidate.can_download_from_github);
@@ -941,10 +1019,10 @@ fn merge_candidates(mut candidates: Vec<UpdateCandidate>) -> Option<UpdateCandid
         .iter()
         .any(|candidate| candidate.mandatory);
 
-    if primary.mirror_asset_url.is_none() {
-        primary.mirror_asset_url = fallback_candidates
+    if primary.mirror_chyan_asset_url.is_none() {
+        primary.mirror_chyan_asset_url = fallback_candidates
             .iter()
-            .find_map(|candidate| candidate.mirror_asset_url.clone());
+            .find_map(|candidate| candidate.mirror_chyan_asset_url.clone());
     }
     if primary.github_asset_url.is_none() {
         primary.github_asset_url = fallback_candidates
@@ -986,13 +1064,13 @@ fn merge_candidates(mut candidates: Vec<UpdateCandidate>) -> Option<UpdateCandid
 
 fn recommended_source(
     preference: &DownloadSourcePreference,
-    can_download_from_mirror: bool,
+    can_download_from_mirror_chyan: bool,
     can_download_from_github: bool,
 ) -> Option<DownloadSourceUsed> {
     match preference {
-        DownloadSourcePreference::MirrorFirst => {
-            if can_download_from_mirror {
-                Some(DownloadSourceUsed::Mirror)
+        DownloadSourcePreference::MirrorChyanFirst => {
+            if can_download_from_mirror_chyan {
+                Some(DownloadSourceUsed::MirrorChyan)
             } else if can_download_from_github {
                 Some(DownloadSourceUsed::Github)
             } else {
@@ -1002,8 +1080,8 @@ fn recommended_source(
         DownloadSourcePreference::GithubFirst => {
             if can_download_from_github {
                 Some(DownloadSourceUsed::Github)
-            } else if can_download_from_mirror {
-                Some(DownloadSourceUsed::Mirror)
+            } else if can_download_from_mirror_chyan {
+                Some(DownloadSourceUsed::MirrorChyan)
             } else {
                 None
             }
@@ -1078,19 +1156,19 @@ fn update_error_action(error: &AppError) -> Option<&'static str> {
         "updateProviderFixtureUnreadable" => Some("fixFixturePath"),
         "updatePlatformUnsupported" | "updatePortableManualOnly" => Some("useSupportedInstall"),
         "updateGithubApi" | "updateGithubRateLimited" | "updateGithubNoAssets" => Some("retry"),
-        "updateMirrorApi" => Some("retry"),
-        "updateMirrorCdkExpired"
-        | "updateMirrorCdkInvalid"
-        | "updateMirrorCdkMismatched"
-        | "updateMirrorCdkBlocked"
-        | "updateMirrorCdk" => Some("checkCdk"),
-        "updateMirrorCdkQuotaExhausted" => Some("waitOrUpgrade"),
-        "updateMirrorInvalidParams"
-        | "updateMirrorInvalidOs"
-        | "updateMirrorInvalidArch"
-        | "updateMirrorInvalidChannel" => Some("reportBug"),
-        "updateMirrorResourceNotFound" => Some("retry"),
-        "updateMirrorBusiness" => Some("retry"),
+        "updateMirrorChyanApi" => Some("retry"),
+        "updateMirrorChyanCdkExpired"
+        | "updateMirrorChyanCdkInvalid"
+        | "updateMirrorChyanCdkMismatched"
+        | "updateMirrorChyanCdkBlocked"
+        | "updateMirrorChyanCdk" => Some("checkCdk"),
+        "updateMirrorChyanCdkQuotaExhausted" => Some("waitOrUpgrade"),
+        "updateMirrorChyanInvalidParams"
+        | "updateMirrorChyanInvalidOs"
+        | "updateMirrorChyanInvalidArch"
+        | "updateMirrorChyanInvalidChannel" => Some("reportBug"),
+        "updateMirrorChyanResourceNotFound" => Some("retry"),
+        "updateMirrorChyanBusiness" => Some("retry"),
         _ => Some("retry"),
     }
 }
@@ -1159,7 +1237,7 @@ mod tests {
     #[test]
     fn returns_source_not_configured_when_no_provider_fixture_exists_and_github_only() {
         let service = UpdateCheckService::with_providers_and_platform(
-            MirrorProvider::offline(),
+            MirrorChyanProvider::offline(),
             GithubProvider::offline(),
             test_platform(Os::Macos, Arch::Aarch64, InstallKind::MacosAppBundle),
         );
@@ -1170,18 +1248,18 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_mirror_when_github_is_not_configured() {
-        let paths = test_paths("check-github-first-mirror-fallback");
-        let mirror_manifest = write_manifest(&paths, "mirror.json", "1.0.5");
+    fn falls_back_to_mirror_chyan_when_github_is_not_configured() {
+        let paths = test_paths("check-github-first-mirror-chyan-fallback");
+        let mirror_chyan_manifest = write_manifest(&paths, "mirror.json", "1.0.5");
         let service = UpdateCheckService::with_providers(
-            MirrorProvider::with_manifest_path(mirror_manifest),
+            MirrorChyanProvider::with_manifest_path(mirror_chyan_manifest),
             GithubProvider::offline(),
         );
         let settings = test_settings(CheckSourcePreference::GithubFirst);
 
         let (result, _) = service
             .evaluate(&settings, &test_context(InstallKind::MacosAppBundle))
-            .expect("github fails but mirror succeeds as fallback");
+            .expect("github fails but mirror_chyan succeeds as fallback");
 
         assert_eq!(result.status, UpdateCheckStatus::Available);
         assert_eq!(result.latest_version.as_deref(), Some("1.0.5"));
@@ -1190,13 +1268,13 @@ mod tests {
     #[test]
     fn prefers_highest_available_version_across_providers() {
         let paths = test_paths("check-highest-version");
-        let mirror_manifest = write_manifest(&paths, "mirror.json", "1.0.5");
+        let mirror_chyan_manifest = write_manifest(&paths, "mirror.json", "1.0.5");
         let github_manifest = write_manifest(&paths, "github.json", "1.0.6");
         let service = UpdateCheckService::with_providers(
-            MirrorProvider::with_manifest_path(mirror_manifest),
+            MirrorChyanProvider::with_manifest_path(mirror_chyan_manifest),
             GithubProvider::with_manifest_path(github_manifest),
         );
-        let settings = test_settings(CheckSourcePreference::MirrorFirst);
+        let settings = test_settings(CheckSourcePreference::MirrorChyanFirst);
 
         let (result, next_state) = service
             .evaluate(&settings, &test_context(InstallKind::MacosAppBundle))
@@ -1214,7 +1292,7 @@ mod tests {
         let paths = test_paths("check-not-available");
         let github_manifest = write_manifest(&paths, "github.json", "1.0.3");
         let service = UpdateCheckService::with_providers(
-            MirrorProvider::offline(),
+            MirrorChyanProvider::offline(),
             GithubProvider::with_manifest_path(github_manifest),
         );
         let settings = test_settings(CheckSourcePreference::GithubFirst);
@@ -1233,7 +1311,7 @@ mod tests {
         let paths = test_paths("check-asset-url");
         let github_manifest = write_manifest(&paths, "github.json", "1.0.5");
         let service = UpdateCheckService::with_providers(
-            MirrorProvider::offline(),
+            MirrorChyanProvider::offline(),
             GithubProvider::with_manifest_path(github_manifest),
         );
         let settings = test_settings(CheckSourcePreference::GithubFirst);
@@ -1249,21 +1327,24 @@ mod tests {
     #[test]
     fn stores_asset_url_for_recommended_download_source() {
         let paths = test_paths("check-recommended-source-url");
-        let mirror_manifest = write_manifest(&paths, "mirror.json", "1.0.5");
+        let mirror_chyan_manifest = write_manifest(&paths, "mirror.json", "1.0.5");
         let github_manifest = write_manifest(&paths, "github.json", "1.0.5");
         let service = UpdateCheckService::with_providers(
-            MirrorProvider::with_manifest_path(mirror_manifest),
+            MirrorChyanProvider::with_manifest_path(mirror_chyan_manifest),
             GithubProvider::with_manifest_path(github_manifest),
         );
         let mut settings = test_settings(CheckSourcePreference::GithubFirst);
-        settings.download_source_preference = DownloadSourcePreference::MirrorFirst;
+        settings.download_source_preference = DownloadSourcePreference::MirrorChyanFirst;
 
         let (result, next_state) = service
             .evaluate(&settings, &test_context(InstallKind::MacosAppBundle))
             .expect("available update should have recommended asset url");
 
-        assert_eq!(result.recommended_source, Some(DownloadSourceUsed::Mirror));
-        assert_eq!(next_state.source, Some(DownloadSourceUsed::Mirror));
+        assert_eq!(
+            result.recommended_source,
+            Some(DownloadSourceUsed::MirrorChyan)
+        );
+        assert_eq!(next_state.source, Some(DownloadSourceUsed::MirrorChyan));
         assert_eq!(
             result.asset_url.as_deref(),
             Some("https://mirrorchyan.com/resources/download/floral-notepaper-1.0.5-macos-aarch64")
@@ -1272,20 +1353,22 @@ mod tests {
     }
 
     #[test]
-    fn merge_candidates_enriches_mirror_result_with_github_metadata() {
-        let mirror_candidate = UpdateCandidate {
+    fn merge_candidates_enriches_mirror_chyan_result_with_github_metadata() {
+        let mirror_chyan_candidate = UpdateCandidate {
             priority: 0,
             version: "1.0.5".into(),
             normalized_version: Version::new(1, 0, 5),
             release_notes: None,
             mandatory: false,
-            asset_name: "mirror-generated.zip".into(),
+            asset_name: "mirror-chyan-generated.zip".into(),
             asset_sha256: None,
             asset_size: 0,
             asset_url: Some("https://mirrorchyan.com/resources/download/floral".into()),
-            mirror_asset_url: Some("https://mirrorchyan.com/resources/download/floral".into()),
+            mirror_chyan_asset_url: Some(
+                "https://mirrorchyan.com/resources/download/floral".into(),
+            ),
             github_asset_url: None,
-            can_download_from_mirror: true,
+            can_download_from_mirror_chyan: true,
             can_download_from_github: false,
             sha256_verification_enabled: false,
         };
@@ -1299,14 +1382,14 @@ mod tests {
             asset_sha256: Some("3333333333333333333333333333333333333333333333333333333333333333".into()),
             asset_size: 22345678,
             asset_url: Some("https://github.com/Achilng/floral-notepaper/releases/download/v1.0.5/floral-notepaper_1.0.5_macos_aarch64_app.zip".into()),
-            mirror_asset_url: None,
+            mirror_chyan_asset_url: None,
             github_asset_url: Some("https://github.com/Achilng/floral-notepaper/releases/download/v1.0.5/floral-notepaper_1.0.5_macos_aarch64_app.zip".into()),
-            can_download_from_mirror: false,
+            can_download_from_mirror_chyan: false,
             can_download_from_github: true,
             sha256_verification_enabled: true,
         };
 
-        let merged = merge_candidates(vec![mirror_candidate, github_candidate])
+        let merged = merge_candidates(vec![mirror_chyan_candidate, github_candidate])
             .expect("same-version candidates should merge");
 
         assert_eq!(
@@ -1315,20 +1398,20 @@ mod tests {
         );
         assert_eq!(merged.asset_size, 22345678);
         assert!(merged.asset_sha256.is_some());
-        assert!(merged.can_download_from_mirror);
+        assert!(merged.can_download_from_mirror_chyan);
         assert!(merged.can_download_from_github);
         assert!(merged.github_asset_url.is_some());
-        assert!(merged.mirror_asset_url.is_some());
+        assert!(merged.mirror_chyan_asset_url.is_some());
     }
 
     #[test]
-    fn mirror_request_error_message_does_not_include_sensitive_url() {
+    fn mirror_chyan_request_error_message_does_not_include_sensitive_url() {
         let error = Client::new()
             .get("http://127.0.0.1:0/latest?cdk=secret-token")
             .send()
             .expect_err("invalid URL should fail before network I/O");
 
-        let message = mirror_request_error_message(&error);
+        let message = mirror_chyan_request_error_message(&error);
 
         assert!(!message.contains("secret-token"));
         assert!(!message.contains("cdk="));
@@ -1340,7 +1423,7 @@ mod tests {
         let paths = test_paths("check-manual-updates-last-auto-check-at");
         let github_manifest = write_manifest(&paths, "github.json", "1.0.5");
         let service = UpdateCheckService::with_providers_and_platform(
-            MirrorProvider::offline(),
+            MirrorChyanProvider::offline(),
             GithubProvider::with_manifest_path(github_manifest),
             test_platform(Os::Macos, Arch::Aarch64, InstallKind::MacosAppBundle),
         );
@@ -1357,7 +1440,7 @@ mod tests {
     fn run_rejects_unknown_install_kind() {
         let paths = test_paths("check-run-unknown-platform");
         let service = UpdateCheckService::with_providers_and_platform(
-            MirrorProvider::offline(),
+            MirrorChyanProvider::offline(),
             GithubProvider::offline(),
             test_platform(Os::Macos, Arch::Aarch64, InstallKind::Unknown),
         );
@@ -1382,7 +1465,7 @@ mod tests {
     fn run_rejects_windows_portable_install_kind() {
         let paths = test_paths("check-run-portable-platform");
         let service = UpdateCheckService::with_providers_and_platform(
-            MirrorProvider::offline(),
+            MirrorChyanProvider::offline(),
             GithubProvider::offline(),
             test_platform(Os::Windows, Arch::X86_64, InstallKind::WindowsPortable),
         );
@@ -1417,7 +1500,7 @@ mod tests {
         state::save(&paths, &previous).expect("seed available state");
 
         let service = UpdateCheckService::with_providers_and_platform(
-            MirrorProvider::offline(),
+            MirrorChyanProvider::offline(),
             GithubProvider::offline(),
             test_platform(Os::Macos, Arch::Aarch64, InstallKind::MacosAppBundle),
         );

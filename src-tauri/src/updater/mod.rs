@@ -190,8 +190,8 @@ impl UpdaterState {
 
     pub fn settings(&self) -> Result<types::UpdateSettingsDto, AppError> {
         let settings = settings::load(&self.paths)?;
-        let has_mirror_cdk = self.has_mirror_cdk_for_settings();
-        Ok(settings.into_dto(has_mirror_cdk))
+        let (has_mirror_chyan_cdk, mirror_chyan_cdk_length) = self.cdk_settings_info();
+        Ok(settings.into_dto(has_mirror_chyan_cdk, mirror_chyan_cdk_length))
     }
 
     pub fn save_settings(
@@ -201,32 +201,40 @@ impl UpdaterState {
         let existing = settings::load(&self.paths)?;
         let stored = settings::StoredUpdateSettings::from_user_settings(&existing, settings);
         settings::save(&self.paths, &stored)?;
-        let has_mirror_cdk = self.has_mirror_cdk_for_settings();
-        Ok(stored.into_dto(has_mirror_cdk))
+        let (has_mirror_chyan_cdk, mirror_chyan_cdk_length) = self.cdk_settings_info();
+        Ok(stored.into_dto(has_mirror_chyan_cdk, mirror_chyan_cdk_length))
     }
 
-    pub fn set_mirror_cdk(&self, cdk: &str) -> Result<(), AppError> {
+    pub fn set_mirror_chyan_cdk(&self, cdk: &str) -> Result<(), AppError> {
         self.cdk_store.set_cdk(cdk)
     }
 
-    pub fn clear_mirror_cdk(&self) -> Result<(), AppError> {
+    pub fn clear_mirror_chyan_cdk(&self) -> Result<(), AppError> {
         self.cdk_store.clear_cdk()
     }
 
-    pub fn has_mirror_cdk(&self) -> Result<bool, AppError> {
+    pub fn has_mirror_chyan_cdk(&self) -> Result<bool, AppError> {
         self.cdk_store.has_cdk()
     }
 
-    pub fn get_mirror_cdk(&self) -> Option<String> {
+    pub fn get_mirror_chyan_cdk(&self) -> Option<String> {
         self.cdk_store.get_cdk()
     }
 
-    fn has_mirror_cdk_for_settings(&self) -> bool {
+    fn cdk_settings_info(&self) -> (bool, Option<u32>) {
         match self.cdk_store.has_cdk() {
-            Ok(has_cdk) => has_cdk,
+            Ok(true) => {
+                let len = self
+                    .cdk_store
+                    .get_cdk()
+                    .map(|cdk| cdk.len() as u32)
+                    .filter(|n| *n > 0);
+                (true, len)
+            }
+            Ok(false) => (false, None),
             Err(error) => {
-                eprintln!("failed to read Mirror CDK from secure storage: {error}");
-                false
+                eprintln!("failed to read MirrorChyan CDK from secure storage: {error}");
+                (false, None)
             }
         }
     }
@@ -574,12 +582,13 @@ mod tests {
                 auto_check: false,
                 auto_download: true,
                 check_interval_hours: 168,
-                check_source_preference: CheckSourcePreference::MirrorFirst,
+                check_source_preference: CheckSourcePreference::MirrorChyanFirst,
                 download_source_preference: DownloadSourcePreference::GithubFirst,
                 channel: UpdateChannel::Beta,
                 allow_prerelease: true,
                 last_auto_check_at: None,
-                has_mirror_cdk: false,
+                has_mirror_chyan_cdk: false,
+                mirror_chyan_cdk_length: None,
             })
             .expect("save settings");
 
@@ -634,11 +643,11 @@ mod tests {
 
         let settings = state.settings().expect("settings should still load");
 
-        assert!(!settings.has_mirror_cdk);
+        assert!(!settings.has_mirror_chyan_cdk);
     }
 
     #[test]
-    fn has_mirror_cdk_propagates_unavailable_secure_store() {
+    fn has_mirror_chyan_cdk_propagates_unavailable_secure_store() {
         let state = UpdaterState::with_paths_version_and_cdk_store(
             test_paths("updater-has-cdk-keyring-unavailable"),
             version::CURRENT_APP_VERSION,
@@ -646,7 +655,7 @@ mod tests {
         );
 
         let error = state
-            .has_mirror_cdk()
+            .has_mirror_chyan_cdk()
             .expect_err("direct CDK status should propagate secure store failures");
 
         assert_eq!(error.code, "updateSecureStoreUnavailable");

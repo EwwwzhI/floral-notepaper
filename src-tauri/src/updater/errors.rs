@@ -93,41 +93,41 @@ pub fn portable_manual_only() -> AppError {
     )
 }
 
-pub fn mirror_api_error(message: impl Into<String>) -> AppError {
+pub fn mirror_chyan_api_error(message: impl Into<String>) -> AppError {
     app_error(
-        "updateMirrorApi",
+        "updateMirrorChyanApi",
         format!("Mirror酱 API 请求失败：{}", message.into()),
     )
 }
 
-pub fn mirror_cdk_error(code: i32, message: impl Into<String>) -> AppError {
+pub fn mirror_chyan_cdk_error(code: i32, message: impl Into<String>) -> AppError {
     let error_code = match code {
-        7001 => "updateMirrorCdkExpired",
-        7002 => "updateMirrorCdkInvalid",
-        7003 => "updateMirrorCdkQuotaExhausted",
-        7004 => "updateMirrorCdkMismatched",
-        7005 => "updateMirrorCdkBlocked",
-        _ => "updateMirrorCdk",
+        7001 => "updateMirrorChyanCdkExpired",
+        7002 => "updateMirrorChyanCdkInvalid",
+        7003 => "updateMirrorChyanCdkQuotaExhausted",
+        7004 => "updateMirrorChyanCdkMismatched",
+        7005 => "updateMirrorChyanCdkBlocked",
+        _ => "updateMirrorChyanCdk",
     };
     with_detail(
         app_error(error_code, message.into()),
-        "mirrorCode",
+        "mirrorChyanCode",
         code.to_string(),
     )
 }
 
-pub fn mirror_resource_error(code: i32, message: impl Into<String>) -> AppError {
+pub fn mirror_chyan_resource_error(code: i32, message: impl Into<String>) -> AppError {
     let error_code = match code {
-        1001 => "updateMirrorInvalidParams",
-        8001 => "updateMirrorResourceNotFound",
-        8002 => "updateMirrorInvalidOs",
-        8003 => "updateMirrorInvalidArch",
-        8004 => "updateMirrorInvalidChannel",
-        _ => "updateMirrorBusiness",
+        1001 => "updateMirrorChyanInvalidParams",
+        8001 => "updateMirrorChyanResourceNotFound",
+        8002 => "updateMirrorChyanInvalidOs",
+        8003 => "updateMirrorChyanInvalidArch",
+        8004 => "updateMirrorChyanInvalidChannel",
+        _ => "updateMirrorChyanBusiness",
     };
     with_detail(
         app_error(error_code, message.into()),
-        "mirrorCode",
+        "mirrorChyanCode",
         code.to_string(),
     )
 }

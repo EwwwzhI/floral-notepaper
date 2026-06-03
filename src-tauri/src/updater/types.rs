@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum CheckSourcePreference {
-    MirrorFirst,
     #[default]
+    MirrorChyanFirst,
     GithubFirst,
 }
 
@@ -13,14 +13,14 @@ pub enum CheckSourcePreference {
 #[serde(rename_all = "camelCase")]
 pub enum DownloadSourcePreference {
     #[default]
-    MirrorFirst,
+    MirrorChyanFirst,
     GithubFirst,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum DownloadSourceUsed {
-    Mirror,
+    MirrorChyan,
     Github,
 }
 
@@ -81,7 +81,8 @@ pub struct UpdateSettingsDto {
     pub channel: UpdateChannel,
     pub allow_prerelease: bool,
     pub last_auto_check_at: Option<DateTime<Utc>>,
-    pub has_mirror_cdk: bool,
+    pub has_mirror_chyan_cdk: bool,
+    pub mirror_chyan_cdk_length: Option<u32>,
 }
 
 impl Default for UpdateSettingsDto {
@@ -95,7 +96,8 @@ impl Default for UpdateSettingsDto {
             channel: UpdateChannel::default(),
             allow_prerelease: false,
             last_auto_check_at: None,
-            has_mirror_cdk: false,
+            has_mirror_chyan_cdk: false,
+            mirror_chyan_cdk_length: None,
         }
     }
 }
@@ -204,7 +206,7 @@ pub struct UpdateCheckResult {
     pub latest_version: Option<String>,
     pub release_notes: Option<String>,
     pub mandatory: bool,
-    pub can_download_from_mirror: bool,
+    pub can_download_from_mirror_chyan: bool,
     pub can_download_from_github: bool,
     pub recommended_source: Option<DownloadSourceUsed>,
     pub asset_url: Option<String>,

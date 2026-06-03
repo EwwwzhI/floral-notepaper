@@ -20,11 +20,11 @@ const settings: UpdateSettings = {
   autoDownload: false,
   checkIntervalHours: 24,
   checkSourcePreference: "githubFirst",
-  downloadSourcePreference: "mirrorFirst",
+  downloadSourcePreference: "mirrorChyanFirst",
   channel: "stable",
   allowPrerelease: false,
   lastAutoCheckAt: null,
-  hasMirrorCdk: true,
+  hasMirrorChyanCdk: true,
 };
 
 const status: UpdateState = {
@@ -77,9 +77,8 @@ describe("UpdateSettingsSection", () => {
     expect(markup).toContain("GitHub");
     expect(markup).toContain("Mirror酱");
     expect(markup).toContain("Mirror酱");
-    expect(markup).toContain("已设置");
-    expect(markup).toContain("清除 CDK");
-    expect(markup).toContain("允许预发布版本");
+    expect(markup).toContain("Mirror酱");
+    expect(markup).toContain("没有或者忘记 CDK？");
     expect(markup).not.toContain("当前版本：1.0.4");
     expect(markup).not.toContain("待更新版本：1.0.5");
   });
@@ -184,14 +183,14 @@ describe("UpdateSettingsSection", () => {
         totalBytes: 2048,
         percent: 50,
         bytesPerSecond: 1024,
-        source: "mirror",
+        source: "mirrorChyan",
       },
       "beta",
     );
 
     expect(nextStatus.channel).toBe("beta");
     expect(nextStatus.status).toBe("downloading");
-    expect(nextStatus.source).toBe("mirror");
+    expect(nextStatus.source).toBe("mirrorChyan");
     expect(nextStatus.assetSize).toBe(2048);
   });
 });

@@ -38,7 +38,7 @@ pub struct UpdateManifestAsset {
     pub size: u64,
     pub github_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mirror_url: Option<String>,
+    pub mirror_chyan_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -184,10 +184,10 @@ fn validate_asset(asset: &UpdateManifestAsset) -> Result<(), AppError> {
         )));
     }
 
-    if let Some(mirror_url) = &asset.mirror_url {
-        if !mirror_url.starts_with("https://") {
+    if let Some(mirror_chyan_url) = &asset.mirror_chyan_url {
+        if !mirror_chyan_url.starts_with("https://") {
             return Err(errors::invalid_manifest(format!(
-                "asset.mirrorUrl 必须使用 https：{}",
+                "asset.mirrorChyanUrl 必须使用 https：{}",
                 asset.name
             )));
         }

@@ -3,7 +3,7 @@ use crate::services::notes::AppError;
 use keyring::{Entry, Error as KeyringError};
 
 const SERVICE_NAME: &str = "floral-notepaper";
-const MIRROR_CDK_ACCOUNT: &str = "mirrorchyan-cdk";
+const MIRROR_CHYAN_CDK_ACCOUNT: &str = "mirrorchyan-cdk";
 
 #[derive(Debug, Clone)]
 pub struct CdkStore {
@@ -17,7 +17,7 @@ impl Default for CdkStore {
     fn default() -> Self {
         Self {
             service: SERVICE_NAME,
-            account: MIRROR_CDK_ACCOUNT,
+            account: MIRROR_CHYAN_CDK_ACCOUNT,
             #[cfg(test)]
             unavailable: false,
         }
@@ -53,7 +53,10 @@ impl CdkStore {
     pub fn set_cdk(&self, cdk: &str) -> Result<(), AppError> {
         let cdk = cdk.trim();
         if cdk.is_empty() {
-            return Err(errors::app_error("mirrorCdkEmpty", "Mirror酱 CDK 不能为空"));
+            return Err(errors::app_error(
+                "mirrorChyanCdkEmpty",
+                "Mirror酱 CDK 不能为空",
+            ));
         }
 
         self.entry()?

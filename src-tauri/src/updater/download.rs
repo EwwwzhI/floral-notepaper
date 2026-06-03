@@ -62,7 +62,7 @@ struct DownloadPlan {
     final_path: PathBuf,
     part_path: PathBuf,
     /// Whether SHA-256 hash verification is enabled for this download.
-    /// Set to `false` for Mirror source because the Mirror API does not
+    /// Set to `false` for MirrorChyan source because the MirrorChyan API does not
     /// return asset checksums in its response.
     sha256_verification_enabled: bool,
 }
@@ -244,7 +244,7 @@ impl UpdateDownloadService {
                 current_state.asset_sha256.as_deref(),
                 asset_size,
             ),
-            DownloadSourceUsed::Mirror => self.resolve_mirror_plan(
+            DownloadSourceUsed::MirrorChyan => self.resolve_mirror_chyan_plan(
                 paths,
                 &current_state.current_version,
                 &version,
@@ -285,7 +285,7 @@ impl UpdateDownloadService {
             url,
             final_path,
             part_path,
-            sha256_verification_enabled: !matches!(source, DownloadSourceUsed::Mirror),
+            sha256_verification_enabled: !matches!(source, DownloadSourceUsed::MirrorChyan),
         })
     }
 
@@ -410,7 +410,7 @@ impl UpdateDownloadService {
         })
     }
 
-    fn resolve_mirror_plan(
+    fn resolve_mirror_chyan_plan(
         &self,
         paths: &UpdatePaths,
         current_version: &str,
@@ -420,7 +420,7 @@ impl UpdateDownloadService {
         asset_size: u64,
     ) -> Result<DownloadPlan, AppError> {
         let platform = self.current_platform();
-        let info = super::check::fetch_mirror_download_url(
+        let info = super::check::fetch_mirror_chyan_download_url(
             &platform,
             current_version,
             self.cdk.as_deref(),
@@ -441,12 +441,12 @@ impl UpdateDownloadService {
             asset_name: asset_name.to_string(),
             asset_sha256,
             asset_size,
-            source: DownloadSourceUsed::Mirror,
+            source: DownloadSourceUsed::MirrorChyan,
             url,
             final_path,
             part_path,
-            // Mirror API does not provide asset SHA-256 checksums;
-            // verification is explicitly disabled for Mirror downloads.
+            // MirrorChyan API does not provide asset SHA-256 checksums;
+            // verification is explicitly disabled for MirrorChyan downloads.
             sha256_verification_enabled: false,
         })
     }
@@ -659,8 +659,8 @@ impl UpdateDownloadService {
         }
 
         let actual_sha256 = format!("{:x}", hasher.finalize());
-        // Mirror API does not provide asset SHA-256 checksums, so verification
-        // is explicitly disabled for Mirror-sourced downloads. When verification
+        // MirrorChyan API does not provide asset SHA-256 checksums, so verification
+        // is explicitly disabled for MirrorChyan-sourced downloads. When verification
         // is enabled and no expected hash exists, that is a hard error because
         // it should never happen for GitHub-sourced releases.
         let computed = if let Some(ref expected) = plan.asset_sha256 {
@@ -670,8 +670,8 @@ impl UpdateDownloadService {
             None
         } else if !plan.sha256_verification_enabled {
             eprintln!(
-                "[update] SHA-256 verification is disabled for Mirror source \
-                 downloads (Mirror API does not provide asset checksums)"
+                "[update] SHA-256 verification is disabled for MirrorChyan source \
+                 downloads (MirrorChyan API does not provide asset checksums)"
             );
             None
         } else {
@@ -797,12 +797,12 @@ fn direct_url_matches_source(raw_url: &str, source: &DownloadSourceUsed) -> bool
     };
 
     match source {
-        DownloadSourceUsed::Mirror => is_mirror_download_host(host),
+        DownloadSourceUsed::MirrorChyan => is_mirror_chyan_download_host(host),
         DownloadSourceUsed::Github => is_github_download_host(host),
     }
 }
 
-fn is_mirror_download_host(host: &str) -> bool {
+fn is_mirror_chyan_download_host(host: &str) -> bool {
     let host = host.to_ascii_lowercase();
     host == "mirrorchyan.com" || host == "www.mirrorchyan.com" || host.ends_with(".mirrorchyan.com")
 }
@@ -820,7 +820,7 @@ fn should_try_github_fallback(
     error: &AppError,
     cancel_flag: &Arc<AtomicBool>,
 ) -> bool {
-    *source == DownloadSourceUsed::Mirror
+    *source == DownloadSourceUsed::MirrorChyan
         && error.code != "updateDownloadCancelled"
         && !cancel_flag.load(Ordering::Relaxed)
 }
@@ -912,8 +912,8 @@ fn verify_existing_file(plan: &DownloadPlan) -> Result<Option<Option<String>>, A
     }
 
     let actual = format!("{:x}", hasher.finalize());
-    // Mirror API does not provide asset SHA-256 checksums, so verification
-    // is explicitly disabled for Mirror-sourced downloads. When verification
+    // MirrorChyan API does not provide asset SHA-256 checksums, so verification
+    // is explicitly disabled for MirrorChyan-sourced downloads. When verification
     // is enabled and no expected hash exists, that is a hard error because
     // it should never happen for GitHub-sourced releases.
     if let Some(ref expected) = plan.asset_sha256 {
@@ -1357,8 +1357,8 @@ mod tests {
     }
 
     #[test]
-    fn github_plan_ignores_mirror_direct_url_from_state() {
-        let paths = test_paths("download-github-plan-ignores-mirror-url");
+    fn github_plan_ignores_mirror_chyan_direct_url_from_state() {
+        let paths = test_paths("download-github-plan-ignores-mirror-chyan-url");
         let asset_name = "asset.zip";
         let body = b"payload";
         let sha256 = format!("{:x}", Sha256::digest(body));
@@ -1381,7 +1381,7 @@ mod tests {
       "sha256": "{sha256}",
       "size": {size},
       "githubUrl": "https://github.com/Achilng/floral-notepaper/releases/download/v1.0.5/{asset_name}",
-      "mirrorUrl": "https://mirrorchyan.com/resources/download/floral-notepaper-1.0.5-macos-aarch64"
+      "mirrorChyanUrl": "https://mirrorchyan.com/resources/download/floral-notepaper-1.0.5-macos-aarch64"
     }}
   ]
 }}"#,
@@ -1415,8 +1415,8 @@ mod tests {
     }
 
     #[test]
-    fn mirror_resolution_failure_falls_back_to_existing_github_download() {
-        let paths = test_paths("download-mirror-fallback-github-existing");
+    fn mirror_chyan_resolution_failure_falls_back_to_existing_github_download() {
+        let paths = test_paths("download-mirror-chyan-fallback-github-existing");
         let asset_name = "asset.zip";
         let body = b"fallback payload";
         let sha256 = format!("{:x}", Sha256::digest(body));
@@ -1462,7 +1462,7 @@ mod tests {
             cdk: None,
         };
         let mut current_state = available_state(asset_name, body);
-        current_state.source = Some(DownloadSourceUsed::Mirror);
+        current_state.source = Some(DownloadSourceUsed::MirrorChyan);
         current_state.asset_url = Some("ftp://mirrorchyan.com/resources/download/bad".into());
 
         let result = service
@@ -1490,7 +1490,7 @@ mod tests {
     fn direct_url_source_detection_distinguishes_hosts() {
         assert!(direct_url_matches_source(
             "https://mirrorchyan.com/resources/download/floral",
-            &DownloadSourceUsed::Mirror
+            &DownloadSourceUsed::MirrorChyan
         ));
         assert!(!direct_url_matches_source(
             "https://mirrorchyan.com/resources/download/floral",
@@ -1502,7 +1502,7 @@ mod tests {
         ));
         assert!(!direct_url_matches_source(
             "https://github.com/Achilng/floral-notepaper/releases/download/v1.0.5/asset.zip",
-            &DownloadSourceUsed::Mirror
+            &DownloadSourceUsed::MirrorChyan
         ));
     }
 

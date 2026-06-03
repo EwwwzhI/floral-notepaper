@@ -3,14 +3,14 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   cancelUpdate,
   checkForUpdates,
-  clearMirrorCdk,
+  clearMirrorChyanCdk,
   downloadUpdate,
   getUpdateSettings,
   getUpdateStatus,
   installUpdate,
   reportInstallPreparation,
   saveUpdateSettings,
-  setMirrorCdk,
+  setMirrorChyanCdk,
 } from "./api";
 import type { UpdateSettings } from "./types";
 
@@ -57,11 +57,11 @@ describe("update api", () => {
       autoDownload: false,
       checkIntervalHours: 24,
       checkSourcePreference: "githubFirst",
-      downloadSourcePreference: "mirrorFirst",
+      downloadSourcePreference: "mirrorChyanFirst",
       channel: "stable",
       allowPrerelease: false,
       lastAutoCheckAt: null,
-      hasMirrorCdk: false,
+      hasMirrorChyanCdk: false,
     };
     mockedInvoke.mockResolvedValue(settings);
 
@@ -75,11 +75,11 @@ describe("update api", () => {
   test("sets and clears Mirror CDK", async () => {
     mockedInvoke.mockResolvedValue(undefined);
 
-    await expect(setMirrorCdk("secret-cdk")).resolves.toBeUndefined();
-    await expect(clearMirrorCdk()).resolves.toBeUndefined();
+    await expect(setMirrorChyanCdk("secret-cdk")).resolves.toBeUndefined();
+    await expect(clearMirrorChyanCdk()).resolves.toBeUndefined();
 
-    expect(invoke).toHaveBeenNthCalledWith(1, "update_mirror_cdk_set", { cdk: "secret-cdk" });
-    expect(invoke).toHaveBeenNthCalledWith(2, "update_mirror_cdk_clear");
+    expect(invoke).toHaveBeenNthCalledWith(1, "update_mirror_chyan_cdk_set", { cdk: "secret-cdk" });
+    expect(invoke).toHaveBeenNthCalledWith(2, "update_mirror_chyan_cdk_clear");
   });
 
   test("keeps final command names for staged operations", async () => {
