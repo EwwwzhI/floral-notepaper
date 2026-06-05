@@ -236,6 +236,7 @@ fn find_macos_app_bundle(exe: &Path) -> Option<PathBuf> {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct InferredAsset {
     pub name: String,
     pub url: String,
