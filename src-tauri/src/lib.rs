@@ -149,6 +149,18 @@ fn images_save(note_id: String, data: Vec<u8>, extension: String) -> Result<Stri
 }
 
 #[tauri::command]
+fn images_save_from_path(note_id: String, file_path: String) -> Result<String, AppError> {
+    let path = PathBuf::from(&file_path);
+    let data = std::fs::read(&path)?;
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("png")
+        .to_string();
+    default_store()?.save_image(&note_id, &data, &extension)
+}
+
+#[tauri::command]
 fn images_get_base_dir() -> Result<String, AppError> {
     let store = default_store()?;
     store
@@ -349,6 +361,7 @@ pub fn run() {
             categories_rename,
             categories_delete,
             images_save,
+            images_save_from_path,
             images_get_base_dir,
             images_clean_unused,
             config_get,

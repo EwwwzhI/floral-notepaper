@@ -40,7 +40,7 @@ async function processImageFile(file: File, noteId: string, t?: TFunction): Prom
   return saveImage(noteId, data, ext);
 }
 
-function insertTextAtCursor(
+export function insertTextAtCursor(
   textarea: HTMLTextAreaElement,
   setContent: (value: string) => void,
   text: string,

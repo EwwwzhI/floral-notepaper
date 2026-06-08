@@ -48,8 +48,8 @@ import {
   saveExternalFile,
   updateNote,
 } from "../features/notes/api";
-import { cleanUnusedImages } from "../features/images/api";
-import { useImagePaste } from "../features/images/useImagePaste";
+import { cleanUnusedImages, saveImageFromPath } from "../features/images/api";
+import { useImagePaste, insertTextAtCursor } from "../features/images/useImagePaste";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
 import type { ExternalFile, Note, NoteMetadata } from "../features/notes/types";
 import {
@@ -373,6 +373,8 @@ export function MainWindow({
   const updateStatusHydratedRef = useRef(false);
 
   const isExternal = selectedExternalFile !== null;
+  const isExternalRef = useRef(isExternal);
+  isExternalRef.current = isExternal;
 
   const noteMenuTarget = useMemo(
     () => notes.find((note) => note.id === noteMenu?.noteId) ?? null,
@@ -820,6 +822,46 @@ export function MainWindow({
       void unlisten.then((fn) => fn());
     };
   }, [loadExternalFile]);
+
+  useEffect(() => {
+    const TEXT_RE = /\.(md|markdown|txt)$/i;
+    const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+
+    const unlisten = getCurrentWindow().onDragDropEvent((event) => {
+      if (event.payload.type !== "drop") return;
+      const textPaths: string[] = [];
+      const imagePaths: string[] = [];
+
+      for (const p of event.payload.paths) {
+        if (TEXT_RE.test(p)) textPaths.push(p);
+        else if (IMAGE_RE.test(p)) imagePaths.push(p);
+      }
+
+      for (const p of textPaths) {
+        void loadExternalFile(p);
+      }
+
+      if (imagePaths.length > 0 && selectedIdRef.current && !isExternalRef.current) {
+        const noteId = selectedIdRef.current;
+        void (async () => {
+          const textarea = contentRef.current;
+          if (!textarea) return;
+          try {
+            const rels = await Promise.all(imagePaths.map((p) => saveImageFromPath(noteId, p)));
+            const markdown = rels.map((rel) => `![](${rel})`).join("\n");
+            insertTextAtCursor(textarea, setContent, markdown);
+            setSaveState("dirty");
+          } catch (error) {
+            showToast(getErrorMessage(error));
+          }
+        })();
+      }
+    });
+
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [loadExternalFile, setContent]);
 
   useEffect(() => {
     const unlisten = listen<string>("open-note", (event) => {
