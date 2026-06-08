@@ -219,6 +219,56 @@ describe("scroll sync helpers", () => {
     await expect(measureBlockOffsets(content, source)).resolves.toEqual([0, 36, 90, 144]);
   });
 
+  test("skips standalone markdown link reference definitions before visible blocks", async () => {
+    installFakeDom();
+    const source = new FakeHTMLElement("textarea") as unknown as HTMLTextAreaElement;
+    const content = [
+      "# Title",
+      "",
+      '[docs]: https://example.com/docs "Documentation"',
+      "[api]: /api",
+      "",
+      "Paragraph with a [docs] link.",
+      "",
+      "- first",
+      "- second",
+    ].join("\n");
+
+    await expect(measureBlockOffsets(content, source)).resolves.toEqual([0, 90, 126]);
+  });
+
+  test("keeps paragraph reference-shaped lines in the visible paragraph block", async () => {
+    installFakeDom();
+    const source = new FakeHTMLElement("textarea") as unknown as HTMLTextAreaElement;
+    const content = [
+      "# Title",
+      "",
+      "Paragraph start",
+      "[visible]: https://example.com/visible",
+      "Paragraph end",
+      "",
+      "## Next",
+    ].join("\n");
+
+    await expect(measureBlockOffsets(content, source)).resolves.toEqual([0, 36, 108]);
+  });
+
+  test("keeps list reference-shaped lines in the visible list block", async () => {
+    installFakeDom();
+    const source = new FakeHTMLElement("textarea") as unknown as HTMLTextAreaElement;
+    const content = [
+      "# Title",
+      "",
+      "- first",
+      "[visible-list]: https://example.com/list",
+      "- second",
+      "",
+      "## Next",
+    ].join("\n");
+
+    await expect(measureBlockOffsets(content, source)).resolves.toEqual([0, 36, 108]);
+  });
+
   test("cleans up its hidden mirror and returns no offsets when already aborted", async () => {
     const fakeDocument = installFakeDom();
     const controller = new AbortController();

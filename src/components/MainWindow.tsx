@@ -1509,52 +1509,105 @@ export function MainWindow({
     };
   }, [isResizingSplit]);
 
-  // Measure block offsets + tag preview DOM after content or viewMode changes.
-  // Note switch: measure via rAF (does not block first paint).
-  // Editing: debounce 250ms to avoid N reflows on every keystroke.
-  // Measurement is chunked with setTimeout(0) yields so the main thread
-  // stays responsive even for long documents.
-  useEffect(() => {
-    if (viewMode !== "split") return;
-    if (!contentRef.current || !previewScrollRef.current) return;
-
-    // Clear stale offsets so scroll handlers return early during measurement
-    blockOffsets.current = [];
-
-    const isNoteSwitch = prevSelectedIdRef.current !== selectedId;
-    prevSelectedIdRef.current = selectedId;
-
+  const cancelScrollMeasurement = useCallback(() => {
     if (measureDebounceRef.current) clearTimeout(measureDebounceRef.current);
     cancelAnimationFrame(measureRafRef.current);
     measureControllerRef.current?.abort();
+  }, []);
 
-    const controller = new AbortController();
-    measureControllerRef.current = controller;
-
-    const measure = async () => {
+  const scheduleScrollMeasurement = useCallback(
+    (delayMs: number) => {
+      if (viewMode !== "split") return;
       if (!contentRef.current || !previewScrollRef.current) return;
-      const offsets = await measureBlockOffsets(content, contentRef.current, controller.signal);
-      if (controller.signal.aborted) return;
-      blockOffsets.current = offsets;
-      if (!controller.signal.aborted && previewScrollRef.current) {
-        tagPreviewBlocks(previewScrollRef.current);
-      }
-    };
 
-    if (isNoteSwitch) {
-      measureRafRef.current = requestAnimationFrame(() => {
-        measure();
-      });
-    } else {
-      measureDebounceRef.current = setTimeout(measure, 250);
+      // Clear stale offsets while layout and measurement settle.
+      // 布局和测量稳定前先清空旧偏移量。
+      blockOffsets.current = [];
+      cancelScrollMeasurement();
+
+      const controller = new AbortController();
+      measureControllerRef.current = controller;
+
+      const measure = async () => {
+        if (!contentRef.current || !previewScrollRef.current) return;
+        const offsets = await measureBlockOffsets(content, contentRef.current, controller.signal);
+        if (controller.signal.aborted) return;
+        blockOffsets.current = offsets;
+        if (!controller.signal.aborted && previewScrollRef.current) {
+          tagPreviewBlocks(previewScrollRef.current);
+        }
+      };
+
+      const runAfterLayout = () => {
+        measureRafRef.current = requestAnimationFrame(() => {
+          void measure();
+        });
+      };
+
+      if (delayMs > 0) {
+        measureDebounceRef.current = setTimeout(runAfterLayout, delayMs);
+      } else {
+        runAfterLayout();
+      }
+    },
+    [cancelScrollMeasurement, content, viewMode],
+  );
+
+  // Measure block offsets + tag preview DOM after content or layout-affecting changes.
+  // 内容或影响布局的变化后，测量块偏移量并标记预览 DOM。
+  // Note switch: measure via rAF (does not block first paint). / 切换笔记：通过 rAF 测量，不阻塞首帧渲染。
+  // 切换笔记：通过 rAF 测量，不阻塞首帧渲染。
+  // 切换笔记：通过 rAF 测量，不阻塞首帧渲染。
+  // Editing/layout changes: debounce to avoid N reflows during rapid updates.
+  // 编辑/布局变化：使用防抖，避免快速更新时反复触发重排。
+  useEffect(() => {
+    if (viewMode !== "split") {
+      blockOffsets.current = [];
+      cancelScrollMeasurement();
+      return;
     }
 
+    const isNoteSwitch = prevSelectedIdRef.current !== selectedId;
+    prevSelectedIdRef.current = selectedId;
+    scheduleScrollMeasurement(isNoteSwitch ? 0 : 250);
+
     return () => {
-      if (measureDebounceRef.current) clearTimeout(measureDebounceRef.current);
-      cancelAnimationFrame(measureRafRef.current);
-      measureControllerRef.current?.abort();
+      cancelScrollMeasurement();
     };
-  }, [content, viewMode, selectedId]);
+  }, [
+    cancelScrollMeasurement,
+    content,
+    scheduleScrollMeasurement,
+    selectedId,
+    settingsConfig?.fontSize,
+    settingsConfig?.renderHtmlMarkdown,
+    splitRatio,
+    viewMode,
+  ]);
+
+  useEffect(() => {
+    if (viewMode !== "split") return;
+
+    const observedElements: Element[] = [];
+    if (splitContainerRef.current) observedElements.push(splitContainerRef.current);
+    if (contentRef.current) observedElements.push(contentRef.current);
+    if (previewScrollRef.current) observedElements.push(previewScrollRef.current);
+
+    if (typeof ResizeObserver === "undefined") {
+      const handleResize = () => scheduleScrollMeasurement(120);
+      window.addEventListener("resize", handleResize);
+      return () => window.removeEventListener("resize", handleResize);
+    }
+
+    if (observedElements.length === 0) return;
+
+    const observer = new ResizeObserver(() => {
+      scheduleScrollMeasurement(120);
+    });
+    observedElements.forEach((element) => observer.observe(element));
+
+    return () => observer.disconnect();
+  }, [scheduleScrollMeasurement, viewMode]);
 
   // Reset preview scroll on note switch
   useEffect(() => {

@@ -36,6 +36,10 @@ function yieldToPendingWork(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function isStandaloneLinkReferenceDefinition(line: string): boolean {
+  return /^\s{0,3}\[[^\]]+]:\s*\S/.test(line);
+}
+
 /** Parse markdown into non-empty logical blocks with line boundaries. */
 function parseBlocks(text: string): ParsedBlock[] {
   const lines = text.split("\n");
@@ -54,6 +58,14 @@ function parseBlocks(text: string): ParsedBlock[] {
 
     const line = lines[i];
     const trimmed = line.trim();
+
+    // Link reference definitions become invisible definition nodes in preview. / 链接引用定义在预览中会变成不可见的 definition 节点。
+    // 链接引用定义在预览中会变成不可见的 definition 节点。
+    // 链接引用定义在预览中会变成不可见的 definition 节点。
+    if (isStandaloneLinkReferenceDefinition(line)) {
+      i++;
+      continue;
+    }
 
     // Fenced code block
     const fenceMatch = trimmed.match(/^(```|~~~)/);
