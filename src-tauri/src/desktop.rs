@@ -3,6 +3,8 @@ use crate::{
     services::notes::{default_store, AppConfig, AppError},
 };
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
+use std::sync::{Arc, OnceLock};
 use std::{
     error::Error,
     sync::{
@@ -1223,12 +1225,18 @@ fn hide_fullscreen_window(window: &Window) {
 
     let retained = window.app_handle().clone();
     let label = window.label().to_string();
+    let observer_holder: Arc<OnceLock<objc2::rc::Retained<objc2::runtime::AnyObject>>> =
+        Arc::new(OnceLock::new());
+    let observer_ref = Arc::clone(&observer_holder);
     let block = RcBlock::new(move |_notification: std::ptr::NonNull<_>| {
-        // Only hide if this notification was triggered by our programmatic
-        // set_fullscreen(false), not by the user clicking the green button.
         if FULLSCREEN_HIDING.swap(false, Ordering::SeqCst) {
             if let Some(w) = retained.get_webview_window(&label) {
                 let _ = w.hide();
+            }
+        }
+        if let Some(obs) = observer_ref.get() {
+            unsafe {
+                NSNotificationCenter::defaultCenter().removeObserver(obs);
             }
         }
     });
@@ -1241,8 +1249,7 @@ fn hide_fullscreen_window(window: &Window) {
             &block,
         )
     };
-    // Leak the observer so it survives until the notification fires.
-    Box::leak(Box::new(observer));
+    let _ = observer_holder.set(observer);
 
     FULLSCREEN_HIDING.store(true, Ordering::SeqCst);
     let _ = window.set_fullscreen(false);
