@@ -4,7 +4,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use std::{
     error::Error,
     sync::{
@@ -1212,6 +1212,7 @@ fn hide_fullscreen_window(window: &Window) {
     use objc2_app_kit::NSView;
     use objc2_foundation::{NSNotificationCenter, NSString};
     use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+    use std::rc::Rc;
 
     let Ok(handle) = window.window_handle() else {
         let _ = window.hide();
@@ -1233,9 +1234,9 @@ fn hide_fullscreen_window(window: &Window) {
 
     let retained = window.app_handle().clone();
     let label = window.label().to_string();
-    let observer_holder: Arc<OnceLock<objc2::rc::Retained<objc2::runtime::AnyObject>>> =
-        Arc::new(OnceLock::new());
-    let observer_ref = Arc::clone(&observer_holder);
+    let observer_holder: Rc<OnceLock<objc2::rc::Retained<objc2::runtime::AnyObject>>> =
+        Rc::new(OnceLock::new());
+    let observer_ref = Rc::clone(&observer_holder);
     let block = RcBlock::new(move |_notification: std::ptr::NonNull<_>| {
         if FULLSCREEN_HIDING.swap(false, Ordering::SeqCst) {
             if let Some(w) = retained.get_webview_window(&label) {
@@ -1257,7 +1258,7 @@ fn hide_fullscreen_window(window: &Window) {
             &block,
         )
     };
-    let _ = observer_holder.set(observer);
+    let _ = observer_holder.set(observer.into());
 
     FULLSCREEN_HIDING.store(true, Ordering::SeqCst);
     let _ = window.set_fullscreen(false);

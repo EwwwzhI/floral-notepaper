@@ -3,8 +3,16 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
-import contributors from "../generated/contributors.json";
+import contributorsData from "../generated/contributors.json";
 import { getTips, parseTip } from "../locales/tips";
+
+interface Contributor {
+  login: string;
+  avatar_url: string;
+  html_url: string;
+}
+
+const contributors = contributorsData as Contributor[];
 
 interface AboutPanelProps {
   onClose: () => void;
