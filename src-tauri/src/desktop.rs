@@ -1810,7 +1810,7 @@ fn open_or_focus_window(
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
             .traffic_light_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                14.0, 23.0,
+                14.0, 20.0,
             )))
     } else {
         builder

@@ -1751,8 +1751,10 @@ export function MainWindow({
             <span className="text-[15px] font-serif font-medium text-ink-soft tracking-wide leading-none">
               花笺
             </span>
-            <span className="text-[11px] text-ink-ghost font-body leading-none">—</span>
-            <span className="text-[11px] text-ink-faint font-body truncate max-w-[240px] leading-none">
+            <span className="text-[11px] text-ink-ghost font-body leading-none translate-y-px">
+              —
+            </span>
+            <span className="text-[11px] text-ink-faint font-body truncate max-w-[240px] leading-none translate-y-px">
               {title ||
                 selectedNote?.preview ||
                 t("common.untitledNote", { defaultValue: "无标题笔记" })}
