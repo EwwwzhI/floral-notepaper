@@ -9,6 +9,11 @@ import { exportMarkdownNote, importMarkdownNote } from "../features/importExport
 import { MarkdownPreview } from "../features/markdown/MarkdownPreview";
 import { showToast } from "./Toast";
 import {
+  blockIndexAtOffset,
+  measureBlockOffsets,
+  tagPreviewBlocks,
+} from "../features/markdown/scrollSync";
+import {
   chooseDataDirectory,
   getConfig,
   migrateDataDir,
@@ -373,6 +378,14 @@ export function MainWindow({
   const [categoryMenuHoverSuppressed, setCategoryMenuHoverSuppressed] = useState(false);
   const contentRef = useRef<HTMLTextAreaElement>(null);
   const windowLabelRef = useRef("main");
+  const previewScrollRef = useRef<HTMLDivElement>(null);
+  const blockOffsets = useRef<number[]>([]);
+  const scrollSource = useRef<"editor" | "preview" | null>(null);
+  const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const measureDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const measureRafRef = useRef<number>(0);
+  const measureControllerRef = useRef<AbortController | null>(null);
+  const prevSelectedIdRef = useRef(selectedId);
   const externalFileMtimeRef = useRef<number>(0);
   const lastExternalSaveRef = useRef<number>(0);
   const imageBaseDir = useImageBaseDir();
@@ -1688,6 +1701,170 @@ export function MainWindow({
     };
   }, [isResizingSplit]);
 
+  const cancelScrollMeasurement = useCallback(() => {
+    if (measureDebounceRef.current) clearTimeout(measureDebounceRef.current);
+    cancelAnimationFrame(measureRafRef.current);
+    measureControllerRef.current?.abort();
+  }, []);
+
+  const scheduleScrollMeasurement = useCallback(
+    (delayMs: number) => {
+      if (viewMode !== "split") return;
+      if (!contentRef.current || !previewScrollRef.current) return;
+
+      // Clear stale offsets while layout and measurement settle.
+      // 布局和测量稳定前先清空旧偏移量。
+      blockOffsets.current = [];
+      cancelScrollMeasurement();
+
+      const controller = new AbortController();
+      measureControllerRef.current = controller;
+
+      const measure = async () => {
+        if (!contentRef.current || !previewScrollRef.current) return;
+        const offsets = await measureBlockOffsets(content, contentRef.current, controller.signal);
+        if (controller.signal.aborted) return;
+        blockOffsets.current = offsets;
+        if (!controller.signal.aborted && previewScrollRef.current) {
+          tagPreviewBlocks(previewScrollRef.current);
+        }
+      };
+
+      const runAfterLayout = () => {
+        measureRafRef.current = requestAnimationFrame(() => {
+          void measure();
+        });
+      };
+
+      if (delayMs > 0) {
+        measureDebounceRef.current = setTimeout(runAfterLayout, delayMs);
+      } else {
+        runAfterLayout();
+      }
+    },
+    [cancelScrollMeasurement, content, viewMode],
+  );
+
+  // Measure block offsets + tag preview DOM after content or layout-affecting changes.
+  // 内容或影响布局的变化后，测量块偏移量并标记预览 DOM。
+  // Note switch: measure via rAF (does not block first paint). / 切换笔记：通过 rAF 测量，不阻塞首帧渲染。
+  // 切换笔记：通过 rAF 测量，不阻塞首帧渲染。
+  // 切换笔记：通过 rAF 测量，不阻塞首帧渲染。
+  // Editing/layout changes: debounce to avoid N reflows during rapid updates.
+  // 编辑/布局变化：使用防抖，避免快速更新时反复触发重排。
+  useEffect(() => {
+    if (viewMode !== "split") {
+      blockOffsets.current = [];
+      cancelScrollMeasurement();
+      return;
+    }
+
+    const isNoteSwitch = prevSelectedIdRef.current !== selectedId;
+    prevSelectedIdRef.current = selectedId;
+    scheduleScrollMeasurement(isNoteSwitch ? 0 : 250);
+
+    return () => {
+      cancelScrollMeasurement();
+    };
+  }, [
+    cancelScrollMeasurement,
+    content,
+    scheduleScrollMeasurement,
+    selectedId,
+    settingsConfig?.fontSize,
+    settingsConfig?.renderHtmlMarkdown,
+    splitRatio,
+    viewMode,
+  ]);
+
+  useEffect(() => {
+    if (viewMode !== "split") return;
+
+    const observedElements: Element[] = [];
+    if (splitContainerRef.current) observedElements.push(splitContainerRef.current);
+    if (contentRef.current) observedElements.push(contentRef.current);
+    if (previewScrollRef.current) observedElements.push(previewScrollRef.current);
+
+    if (typeof ResizeObserver === "undefined") {
+      const handleResize = () => scheduleScrollMeasurement(120);
+      window.addEventListener("resize", handleResize);
+      return () => window.removeEventListener("resize", handleResize);
+    }
+
+    if (observedElements.length === 0) return;
+
+    const observer = new ResizeObserver(() => {
+      scheduleScrollMeasurement(120);
+    });
+    observedElements.forEach((element) => observer.observe(element));
+
+    return () => observer.disconnect();
+  }, [scheduleScrollMeasurement, viewMode]);
+
+  // Reset preview scroll on note switch
+  useEffect(() => {
+    if (previewScrollRef.current) {
+      previewScrollRef.current.scrollTop = 0;
+    }
+  }, [selectedId]);
+
+  const handleEditorScroll = useCallback(() => {
+    if (viewMode !== "split") return;
+    if (scrollSource.current === "preview") return;
+
+    const textarea = contentRef.current;
+    const preview = previewScrollRef.current;
+    if (!textarea || !preview) return;
+
+    scrollSource.current = "editor";
+    if (scrollTimer.current) clearTimeout(scrollTimer.current);
+    scrollTimer.current = setTimeout(() => {
+      scrollSource.current = null;
+    }, 150);
+
+    const offsets = blockOffsets.current;
+    if (offsets.length === 0) return;
+
+    const blockIdx = blockIndexAtOffset(offsets, textarea.scrollTop);
+    const el = preview.querySelector<HTMLElement>(`[data-block-index="${blockIdx}"]`);
+    if (!el) return;
+
+    el.scrollIntoView({ block: "start", behavior: "instant" });
+  }, [viewMode]);
+
+  const handlePreviewScroll = useCallback(() => {
+    if (viewMode !== "split") return;
+    if (scrollSource.current === "editor") return;
+
+    const textarea = contentRef.current;
+    const preview = previewScrollRef.current;
+    if (!textarea || !preview) return;
+
+    scrollSource.current = "preview";
+    if (scrollTimer.current) clearTimeout(scrollTimer.current);
+    scrollTimer.current = setTimeout(() => {
+      scrollSource.current = null;
+    }, 150);
+
+    const elements = preview.querySelectorAll<HTMLElement>("[data-block-index]");
+    if (elements.length === 0) return;
+
+    const containerRect = preview.getBoundingClientRect();
+    let topDomIndex = 0;
+    for (const el of elements) {
+      const rect = el.getBoundingClientRect();
+      if (rect.bottom > containerRect.top + 1) {
+        topDomIndex = parseInt(el.getAttribute("data-block-index")!, 10);
+        break;
+      }
+    }
+
+    const offsets = blockOffsets.current;
+    if (topDomIndex >= offsets.length) return;
+
+    textarea.scrollTop = offsets[topDomIndex];
+  }, [viewMode]);
+
   const handlePinEntry = async () => {
     if (!selectedId) return;
     const isPinned = pinnedTileIds.has(selectedId);
@@ -2745,6 +2922,7 @@ export function MainWindow({
                           onPaste={imagePasteHandler}
                           onDrop={imageDropHandler}
                           onDragOver={imageDragOverHandler}
+                          onScroll={handleEditorScroll}
                           className="w-full h-full leading-[1.9] text-ink-soft font-body placeholder:text-ink-ghost/40"
                           style={{
                             fontSize: `${settingsConfig?.fontSize ?? 14}px`,
@@ -2790,6 +2968,8 @@ export function MainWindow({
                         </div>
                       )}
                       <div
+                        ref={previewScrollRef}
+                        onScroll={handlePreviewScroll}
                         className={`flex-1 overflow-y-auto px-6 pb-6 ${
                           viewMode === "preview" ? "pt-3" : "pt-1"
                         }`}
