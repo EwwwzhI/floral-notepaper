@@ -15,4 +15,18 @@ describe("MarkdownPreview", () => {
     expect(markup).toContain("花笺");
     expect(markup).toContain("正文");
   });
+
+  test("keeps code block controls outside the horizontally scrollable pre", () => {
+    const markup = renderToStaticMarkup(
+      <MarkdownPreview content={"```text\nvery long code line\n```"} />,
+    );
+
+    const preCloseIndex = markup.indexOf("</pre>");
+    const buttonIndex = markup.indexOf("<button");
+
+    expect(markup).toContain("markdown-code-block");
+    expect(markup).toContain("markdown-code-scroll");
+    expect(preCloseIndex).toBeGreaterThan(-1);
+    expect(buttonIndex).toBeGreaterThan(preCloseIndex);
+  });
 });
