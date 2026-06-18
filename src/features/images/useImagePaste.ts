@@ -1,6 +1,10 @@
 import { useCallback, useRef } from "react";
 import type { TFunction } from "i18next";
-import { saveImage } from "./api";
+import {
+  createPendingImageFromFile,
+  pendingImageMarkdown,
+  type PendingImage,
+} from "./pendingImages";
 
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20 MB
 
@@ -14,17 +18,16 @@ const MIME_TO_EXT: Record<string, string> = {
 };
 
 interface UseImagePasteOptions {
-  noteId: string | null;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   setContent: (content: string) => void;
   markDirty: () => void;
-  onEnsureNoteSaved: () => Promise<string | null>;
+  onAddPendingImages: (images: PendingImage[]) => void;
   disabled?: boolean;
   onError?: (message: string) => void;
   t?: TFunction;
 }
 
-async function processImageFile(file: File, noteId: string, t?: TFunction): Promise<string | null> {
+async function processImageFile(file: File, t?: TFunction): Promise<PendingImage | null> {
   if (file.size > MAX_IMAGE_SIZE) {
     throw new Error(
       t?.("errors.imageTooLarge", { defaultValue: "图片文件过大（上限 20 MB）" }) ??
@@ -32,12 +35,7 @@ async function processImageFile(file: File, noteId: string, t?: TFunction): Prom
     );
   }
 
-  const ext = MIME_TO_EXT[file.type];
-  if (!ext) return null;
-
-  const buffer = await file.arrayBuffer();
-  const data = Array.from(new Uint8Array(buffer));
-  return saveImage(noteId, data, ext);
+  return createPendingImageFromFile(file);
 }
 
 export function insertTextAtCursor(
@@ -67,11 +65,10 @@ function getImageFiles(dataTransfer: DataTransfer): File[] {
 }
 
 export function useImagePaste({
-  noteId,
   textareaRef,
   setContent,
   markDirty,
-  onEnsureNoteSaved,
+  onAddPendingImages,
   disabled,
   onError,
   t,
@@ -84,24 +81,21 @@ export function useImagePaste({
       processingRef.current = true;
 
       try {
-        let resolvedId = noteId;
-        if (!resolvedId) {
-          resolvedId = await onEnsureNoteSaved();
-          if (!resolvedId) return;
-        }
-
         const textarea = textareaRef.current;
         if (!textarea) return;
 
+        const pendingImages: PendingImage[] = [];
         const markdownLines: string[] = [];
         for (const file of files) {
-          const relativePath = await processImageFile(file, resolvedId, t);
-          if (relativePath) {
-            markdownLines.push(`![](${relativePath})`);
+          const pendingImage = await processImageFile(file, t);
+          if (pendingImage) {
+            pendingImages.push(pendingImage);
+            markdownLines.push(pendingImageMarkdown(pendingImage.tempId));
           }
         }
 
         if (markdownLines.length > 0) {
+          onAddPendingImages(pendingImages);
           insertTextAtCursor(textarea, setContent, markdownLines.join("\n"));
           markDirty();
         }
@@ -115,7 +109,7 @@ export function useImagePaste({
         processingRef.current = false;
       }
     },
-    [noteId, textareaRef, setContent, markDirty, onEnsureNoteSaved, onError, t],
+    [textareaRef, setContent, markDirty, onAddPendingImages, onError, t],
   );
 
   const handlePaste = useCallback(

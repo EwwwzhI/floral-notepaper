@@ -195,6 +195,18 @@
       "new": "New",
       "open": "Open"
     },
+    "toolbar": {
+      "bold": "Bold",
+      "heading1": "Heading 1",
+      "heading2": "Heading 2",
+      "heading3": "Heading 3",
+      "italic": "Italic",
+      "ol": "Ordered list",
+      "redo": "Redo",
+      "todo": "Todo",
+      "todoToggle": "Toggle done",
+      "undo": "Undo"
+    },
     "tooltip": {
       "close": "Close",
       "openInEditor": "Open in Editor",

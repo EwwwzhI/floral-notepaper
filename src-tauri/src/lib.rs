@@ -5,8 +5,10 @@ pub mod services;
 pub mod updater;
 
 use locales::Locale;
-use services::notes::{default_store, AppConfig, AppError, Note, NoteMetadata, SaveNoteRequest};
-use std::{env, fs, io::Write, path::PathBuf};
+use services::notes::{
+    default_store, AppConfig, AppError, ExternalImageData, Note, NoteMetadata, SaveNoteRequest,
+};
+use std::{collections::BTreeSet, env, fs, io::Write, path::PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 
 #[tauri::command]
@@ -180,6 +182,24 @@ fn images_clean_unused(note_id: String, content: String) -> Result<Vec<String>, 
 }
 
 #[tauri::command]
+fn images_read_external(file_path: String) -> Result<ExternalImageData, AppError> {
+    default_store()?.read_external_image(&PathBuf::from(file_path))
+}
+
+#[tauri::command]
+fn fonts_list_system() -> Vec<String> {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    let mut families = BTreeSet::new();
+    for face in db.faces() {
+        for (family, _) in &face.families {
+            families.insert(family.clone());
+        }
+    }
+    families.into_iter().collect()
+}
+
+#[tauri::command]
 fn config_get() -> Result<AppConfig, AppError> {
     default_store()?.load_config()
 }
@@ -253,6 +273,7 @@ fn config_migrate_data_dir(app: AppHandle, new_data_dir: String) -> Result<AppCo
     let scope = app.asset_protocol_scope();
     let _ = scope.allow_directory(new_path.join("images"), true);
     let _ = scope.allow_directory(new_path.join("backgrounds"), true);
+    let _ = scope.allow_directory(new_path.join("fonts"), true);
 
     let config = new_store.load_config()?;
     let _ = app.emit("config-changed", &config);
@@ -411,6 +432,7 @@ pub fn run() {
                 let scope = app.asset_protocol_scope();
                 let _ = scope.allow_directory(data.join("images"), true);
                 let _ = scope.allow_directory(data.join("backgrounds"), true);
+                let _ = scope.allow_directory(data.join("fonts"), true);
             }
             let updater_state = updater::UpdaterState::new(app.package_info().version.to_string());
             if let Err(error) = updater_state.initialize() {
@@ -443,6 +465,8 @@ pub fn run() {
             images_save_from_path,
             images_get_base_dir,
             images_clean_unused,
+            images_read_external,
+            fonts_list_system,
             config_get,
             copy_background_image,
             config_save,

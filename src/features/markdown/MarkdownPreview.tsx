@@ -68,6 +68,8 @@ interface MarkdownPreviewProps {
   fontSize?: number;
   renderHtml?: boolean;
   imageBaseDir?: string;
+  fontFamily?: string;
+  pendingImages?: Record<string, string>;
 }
 
 const remarkPlugins = [remarkGfm, remarkMath, remarkAlerts];
@@ -281,6 +283,8 @@ export function MarkdownPreview({
   fontSize = 14,
   renderHtml = false,
   imageBaseDir,
+  fontFamily,
+  pendingImages,
 }: MarkdownPreviewProps) {
   const { t } = useTranslation();
   const components = useMemo<Components>(
@@ -288,7 +292,10 @@ export function MarkdownPreview({
       ...staticComponents,
       img: ({ src, alt, ...props }) => {
         let resolvedSrc = src ?? "";
-        if (src?.startsWith("images/") && imageBaseDir) {
+        if (src?.startsWith("pending-image://")) {
+          const tempId = src.slice("pending-image://".length);
+          resolvedSrc = pendingImages?.[tempId] ?? "";
+        } else if (src?.startsWith("images/") && imageBaseDir) {
           resolvedSrc = convertFileSrc(imageBaseDir + "/" + src);
         }
         return (
@@ -302,10 +309,13 @@ export function MarkdownPreview({
         );
       },
     }),
-    [imageBaseDir],
+    [imageBaseDir, pendingImages],
   );
   return (
-    <div className="font-body markdown-selectable" style={{ fontSize: `${fontSize}px` }}>
+    <div
+      className="markdown-selectable"
+      style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily ?? "var(--font-body)" }}
+    >
       {content.trim() ? (
         <Markdown
           remarkPlugins={remarkPlugins}

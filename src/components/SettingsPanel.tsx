@@ -1,11 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { checkGlobalShortcut, chooseBackgroundImage } from "../features/settings/api";
+import {
+  checkGlobalShortcut,
+  chooseBackgroundImage,
+  listSystemFonts,
+} from "../features/settings/api";
 import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
 import type {
   AppConfig,
   BackgroundFit,
+  NoteFontFamily,
   ThemeOption,
   TileColorMode,
   ViewMode,
@@ -22,8 +27,6 @@ import { applyTheme, watchSystemTheme } from "../features/settings/theme";
 import { LOCALE_OPTIONS } from "../locales/locale-whitelist";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
 
-const HARMONY_FONT_LICENSE_URL = new URL("../assets/fonts/LICENSE_Fonts", import.meta.url).href;
-
 interface SettingsPanelProps {
   config: AppConfig;
   onChange: (config: AppConfig) => void;
@@ -33,6 +36,8 @@ interface SettingsPanelProps {
 
 export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: SettingsPanelProps) {
   const { t } = useTranslation();
+  const [systemFonts, setSystemFonts] = useState<string[]>([]);
+  const [fontSearch, setFontSearch] = useState("");
   const setConfigValue = <Key extends keyof AppConfig>(key: Key, value: AppConfig[Key]) => {
     onChange({ ...config, [key]: value });
   };
@@ -87,6 +92,38 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
       })),
     [t],
   );
+  const fontOptions = useMemo<Array<{ value: NoteFontFamily; label: string }>>(() => {
+    if (config.noteFontFamily?.startsWith("system:")) {
+      return [
+        {
+          value: config.noteFontFamily,
+          label: config.noteFontFamily.slice("system:".length),
+        },
+      ];
+    }
+    return [
+      { value: "system", label: t("settings.fontFamily.system", { defaultValue: "跟随系统" }) },
+    ];
+  }, [config.noteFontFamily, t]);
+  const filteredSystemFonts = useMemo(() => {
+    const query = fontSearch.trim().toLocaleLowerCase();
+    const fonts = query
+      ? systemFonts.filter((font) => font.toLocaleLowerCase().includes(query))
+      : systemFonts;
+    return fonts.slice(0, 120);
+  }, [fontSearch, systemFonts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listSystemFonts()
+      .then((fonts) => {
+        if (!cancelled) setSystemFonts(fonts);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <aside className="w-[360px] h-full shrink-0 border-l border-paper-deep/30 bg-cloud/92 backdrop-blur-sm flex flex-col">
@@ -239,6 +276,42 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
               value={config.toggleVisibilityShortcut}
               onChange={(v) => setConfigValue("toggleVisibilityShortcut", v)}
             />
+          </div>
+        </section>
+
+        <section className="space-y-2">
+          <label className="block text-[11px] font-body text-ink-faint">
+            {t("settings.fontFamily.label", { defaultValue: "应用字体" })}
+          </label>
+          <SlidingButtonGroup
+            options={fontOptions}
+            value={config.noteFontFamily ?? "system"}
+            onChange={(value: NoteFontFamily) => setConfigValue("noteFontFamily", value)}
+          />
+          <div className="space-y-1.5">
+            <input
+              type="text"
+              value={fontSearch}
+              onChange={(event) => setFontSearch(event.target.value)}
+              placeholder={t("settings.fontFamily.searchSystem", { defaultValue: "搜索系统字体…" })}
+              className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-body text-ink-soft outline-none placeholder:text-ink-ghost/60"
+            />
+            <select
+              value={config.noteFontFamily?.startsWith("system:") ? config.noteFontFamily : ""}
+              onChange={(event) =>
+                setConfigValue("noteFontFamily", (event.target.value || "system") as NoteFontFamily)
+              }
+              className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-body text-ink-soft outline-none"
+            >
+              <option value="">
+                {t("settings.fontFamily.systemPlaceholder", { defaultValue: "选择系统字体" })}
+              </option>
+              {filteredSystemFonts.map((font) => (
+                <option key={font} value={`system:${font}`}>
+                  {font}
+                </option>
+              ))}
+            </select>
           </div>
         </section>
 
@@ -448,25 +521,6 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
         </section>
 
         <UpdateSettingsSection mode="settingsOnly" />
-
-        <section className="pt-2 border-t border-paper-deep/25">
-          <p className="text-[10px] leading-relaxed text-ink-ghost/75">
-            <span>
-              {t("settings.fontNotice", {
-                defaultValue:
-                  "Uses HarmonyOS Sans SC font. Copyright 2021 Huawei Device Co., Ltd. Licensed under HarmonyOS Sans Fonts License Agreement.",
-              })}
-            </span>{" "}
-            <a
-              href={HARMONY_FONT_LICENSE_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-2 hover:text-ink-faint"
-            >
-              HarmonyOS Sans Fonts License Agreement
-            </a>
-          </p>
-        </section>
       </div>
     </aside>
   );

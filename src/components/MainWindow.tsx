@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
-import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -14,7 +13,13 @@ import {
   tagPreviewBlocks,
 } from "../features/markdown/scrollSync";
 import {
+  applyMarkdownFormat,
+  runEditorCommand,
+  type FormatAction,
+} from "../features/markdown/editorCommands";
+import {
   chooseDataDirectory,
+  chooseNoteImage,
   getConfig,
   migrateDataDir,
   normalizeViewMode,
@@ -54,8 +59,18 @@ import {
   saveExternalFile,
   updateNote,
 } from "../features/notes/api";
-import { cleanUnusedImages, saveImageFromPath } from "../features/images/api";
+import { cleanUnusedImages, readExternalImage, saveImage } from "../features/images/api";
 import { useImagePaste, insertTextAtCursor } from "../features/images/useImagePaste";
+import {
+  createPendingImage,
+  extractPendingImageIds,
+  pendingImageMarkdown,
+  pendingImageObjectUrls,
+  replacePendingImageRefs,
+  revokePendingImages,
+  type PendingImage,
+} from "../features/images/pendingImages";
+import { applyAppFont, resolveNoteFontFamily } from "../features/settings/fonts";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
 import type { ExternalFile, Note, NoteMetadata } from "../features/notes/types";
 import {
@@ -99,190 +114,6 @@ interface CategoryMenuState {
   x: number;
   y: number;
   category: string;
-}
-
-type FormatAction =
-  | "bold"
-  | "italic"
-  | "heading"
-  | "hr"
-  | "ul"
-  | "ol"
-  | "code"
-  | "quote"
-  | "inlineMath"
-  | "blockMath";
-
-function applyFormat(
-  textarea: HTMLTextAreaElement,
-  action: FormatAction,
-  translate: TFunction,
-  setContent: (v: string) => void,
-  markDirty: () => void,
-) {
-  const { selectionStart: start, selectionEnd: end, value } = textarea;
-  const selected = value.slice(start, end);
-  const before = value.slice(0, start);
-  const after = value.slice(end);
-
-  const lineStart = before.lastIndexOf("\n") + 1;
-  const currentLine = before.slice(lineStart);
-
-  let result: string;
-  let cursorStart: number;
-  let cursorEnd: number;
-
-  switch (action) {
-    case "bold": {
-      const fallback = translate("main.formatSample.boldText", { defaultValue: "粗体文本" });
-      const wrapped = `**${selected || fallback}**`;
-      result = before + wrapped + after;
-      cursorStart = start + 2;
-      cursorEnd = cursorStart + (selected || fallback).length;
-      break;
-    }
-    case "italic": {
-      const fallback = translate("main.formatSample.italicText", { defaultValue: "斜体文本" });
-      const wrapped = `*${selected || fallback}*`;
-      result = before + wrapped + after;
-      cursorStart = start + 1;
-      cursorEnd = cursorStart + (selected || fallback).length;
-      break;
-    }
-    case "heading": {
-      const prefix = currentLine.match(/^(#{1,5})\s/);
-      if (prefix) {
-        const newLevel = prefix[1].length < 5 ? "#".repeat(prefix[1].length + 1) : "#";
-        const beforeLine = value.slice(0, lineStart);
-        const afterPrefix = value.slice(lineStart + prefix[0].length);
-        result = beforeLine + newLevel + " " + afterPrefix;
-        const offset = newLevel.length + 1 - prefix[0].length;
-        cursorStart = start + offset;
-        cursorEnd = end + offset;
-      } else if (currentLine.length > 0 && start === end) {
-        result = value.slice(0, lineStart) + "## " + value.slice(lineStart);
-        cursorStart = start + 3;
-        cursorEnd = cursorStart;
-      } else if (selected) {
-        result = before + `## ${selected}` + after;
-        cursorStart = start + 3;
-        cursorEnd = cursorStart + selected.length;
-      } else {
-        result =
-          before +
-          `## ${translate("main.formatSample.headingText", { defaultValue: "标题" })}` +
-          after;
-        cursorStart = start + 3;
-        cursorEnd = cursorStart + 2;
-      }
-      break;
-    }
-    case "hr": {
-      const newlineBefore = before.endsWith("\n") || before === "" ? "" : "\n";
-      const newlineAfter = after.startsWith("\n") || after === "" ? "" : "\n";
-      result = before + `${newlineBefore}---${newlineAfter}` + after;
-      cursorStart = cursorEnd = before.length + newlineBefore.length + 3;
-      break;
-    }
-    case "ul": {
-      if (selected.includes("\n")) {
-        const lines = selected
-          .split("\n")
-          .map((l) => `- ${l}`)
-          .join("\n");
-        result = before + lines + after;
-        cursorStart = start;
-        cursorEnd = start + lines.length;
-      } else {
-        const fallback = translate("main.formatSample.listItem", { defaultValue: "列表项" });
-        const item = `- ${selected || fallback}`;
-        result = before + item + after;
-        cursorStart = start + 2;
-        cursorEnd = cursorStart + (selected || fallback).length;
-      }
-      break;
-    }
-    case "ol": {
-      if (selected.includes("\n")) {
-        const lines = selected
-          .split("\n")
-          .map((l, i) => `${i + 1}. ${l}`)
-          .join("\n");
-        result = before + lines + after;
-        cursorStart = start;
-        cursorEnd = start + lines.length;
-      } else {
-        const fallback = translate("main.formatSample.listItem", { defaultValue: "列表项" });
-        const item = `1. ${selected || fallback}`;
-        result = before + item + after;
-        cursorStart = start + 3;
-        cursorEnd = cursorStart + (selected || fallback).length;
-      }
-      break;
-    }
-    case "code": {
-      if (selected.includes("\n")) {
-        const wrapped = "```\n" + selected + "\n```";
-        result = before + wrapped + after;
-        cursorStart = start + 4;
-        cursorEnd = cursorStart + selected.length;
-      } else {
-        const fallback = translate("main.formatSample.codeText", { defaultValue: "代码" });
-        const wrapped = `\`${selected || fallback}\``;
-        result = before + wrapped + after;
-        cursorStart = start + 1;
-        cursorEnd = cursorStart + (selected || fallback).length;
-      }
-      break;
-    }
-    case "quote": {
-      if (selected.includes("\n")) {
-        const lines = selected
-          .split("\n")
-          .map((l) => `> ${l}`)
-          .join("\n");
-        result = before + lines + after;
-        cursorStart = start;
-        cursorEnd = start + lines.length;
-      } else {
-        const fallback = translate("main.formatSample.quoteText", { defaultValue: "引用文本" });
-        const item = `> ${selected || fallback}`;
-        result = before + item + after;
-        cursorStart = start + 2;
-        cursorEnd = cursorStart + (selected || fallback).length;
-      }
-      break;
-    }
-    case "inlineMath": {
-      const wrapped = `$${selected || "E=mc^2"}$`;
-      result = before + wrapped + after;
-      cursorStart = start + 1;
-      cursorEnd = cursorStart + (selected || "E=mc^2").length;
-      break;
-    }
-    case "blockMath": {
-      const wrapped = `\n$$\n${selected || "x^2 + y^2 = r^2"}\n$$\n`;
-      result = before + wrapped + after;
-      cursorStart = start + 4;
-      cursorEnd = cursorStart + (selected || "x^2 + y^2 = r^2").length;
-      break;
-    }
-  }
-
-  textarea.focus();
-  textarea.setSelectionRange(0, value.length);
-  document.execCommand("insertText", false, result);
-  setContent(result);
-  markDirty();
-  requestAnimationFrame(() => {
-    textarea.setSelectionRange(cursorStart, cursorEnd);
-  });
-}
-
-function runEditorCommand(textarea: HTMLTextAreaElement | null, command: "undo" | "redo"): boolean {
-  if (!textarea || textarea.disabled) return false;
-  textarea.focus();
-  return document.execCommand(command);
 }
 
 export function pinTileButtonTitle(isPinned: boolean): string {
@@ -354,6 +185,9 @@ export function MainWindow({
   const [noteTransitionKey, setNoteTransitionKey] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteExiting, setDeleteExiting] = useState(false);
+  const [clearConfirm, setClearConfirm] = useState(false);
+  const [pendingImages, setPendingImages] = useState<Record<string, PendingImage>>({});
+  const pendingImagesRef = useRef<Record<string, PendingImage>>({});
   const [pinnedTileIds, setPinnedTileIds] = useState<Set<string>>(new Set());
   const [categories, setCategories] = useState<string[]>([]);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
@@ -389,6 +223,8 @@ export function MainWindow({
   const externalFileMtimeRef = useRef<number>(0);
   const lastExternalSaveRef = useRef<number>(0);
   const imageBaseDir = useImageBaseDir();
+  pendingImagesRef.current = pendingImages;
+  const pendingImageUrls = useMemo(() => pendingImageObjectUrls(pendingImages), [pendingImages]);
   const saveStateRef = useRef(saveState);
   const isMacOS = useMemo(() => {
     return (
@@ -486,6 +322,12 @@ export function MainWindow({
         action: "ol",
       },
       {
+        label: "☐",
+        title: t("main.toolbar.todo", { defaultValue: "待办" }),
+        style: "text-[12px]",
+        action: "todo",
+      },
+      {
         label: "<>",
         title: t("main.toolbar.code", { defaultValue: "代码" }),
         style: "font-mono text-[9px]",
@@ -566,6 +408,28 @@ export function MainWindow({
     [content],
   );
   const charCount = useMemo(() => countNoteChars(content), [content]);
+  const noteFontFamily = useMemo(
+    () => resolveNoteFontFamily(settingsConfig?.noteFontFamily),
+    [settingsConfig?.noteFontFamily],
+  );
+
+  useEffect(() => {
+    applyAppFont(settingsConfig?.noteFontFamily);
+  }, [settingsConfig?.noteFontFamily]);
+
+  const addPendingImages = useCallback((images: PendingImage[]) => {
+    if (images.length === 0) return;
+    setPendingImages((current) => ({
+      ...current,
+      ...Object.fromEntries(images.map((image) => [image.tempId, image])),
+    }));
+  }, []);
+
+  const clearPendingImages = useCallback(() => {
+    revokePendingImages(Object.values(pendingImagesRef.current));
+    pendingImagesRef.current = {};
+    setPendingImages({});
+  }, []);
 
   const applyNote = useCallback(
     (note: Note) => {
@@ -578,10 +442,11 @@ export function MainWindow({
       setSelectedId(note.id);
       setTitle(note.title);
       setContent(note.content);
+      clearPendingImages();
       setSaveState("saved");
       setNoteTransitionKey((k) => k + 1);
     },
-    [loadEpoch],
+    [loadEpoch, clearPendingImages],
   );
 
   const replaceNoteMetadata = useCallback((note: Note) => {
@@ -623,8 +488,9 @@ export function MainWindow({
     setSelectedId(null);
     setTitle("");
     setContent("");
+    clearPendingImages();
     setSaveState("idle");
-  }, [loadEpoch]);
+  }, [loadEpoch, clearPendingImages]);
 
   const loadExternalFile = useCallback(
     async (filePath: string) => {
@@ -935,13 +801,15 @@ export function MainWindow({
       }
 
       if (imagePaths.length > 0 && selectedIdRef.current && !isExternalRef.current) {
-        const noteId = selectedIdRef.current;
         void (async () => {
           const textarea = contentRef.current;
           if (!textarea) return;
           try {
-            const rels = await Promise.all(imagePaths.map((p) => saveImageFromPath(noteId, p)));
-            const markdown = rels.map((rel) => `![](${rel})`).join("\n");
+            const pending = await Promise.all(
+              imagePaths.map(async (p) => createPendingImage(await readExternalImage(p))),
+            );
+            addPendingImages(pending);
+            const markdown = pending.map((image) => pendingImageMarkdown(image.tempId)).join("\n");
             insertTextAtCursor(textarea, setContent, markdown);
             saveStateRef.current = "dirty";
             setSaveState("dirty");
@@ -955,7 +823,7 @@ export function MainWindow({
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [loadExternalFile, setContent]);
+  }, [loadExternalFile, setContent, addPendingImages]);
 
   useEffect(() => {
     const unlisten = listen<string>("open-note", (event) => {
@@ -1083,6 +951,33 @@ export function MainWindow({
     (document.activeElement as HTMLElement | null)?.blur();
   }, []);
 
+  const persistPendingImages = useCallback(async (noteId: string, snapshot: string) => {
+    const ids = extractPendingImageIds(snapshot);
+    if (ids.length === 0) return snapshot;
+
+    const replacements: Record<string, string> = {};
+    const savedImages: PendingImage[] = [];
+    for (const id of ids) {
+      const image = pendingImagesRef.current[id];
+      if (!image) continue;
+      replacements[id] = await saveImage(noteId, image.data, image.extension);
+      savedImages.push(image);
+    }
+
+    if (Object.keys(replacements).length === 0) return snapshot;
+    const nextContent = replacePendingImageRefs(snapshot, replacements);
+    setPendingImages((current) => {
+      const next = { ...current };
+      for (const image of savedImages) {
+        delete next[image.tempId];
+      }
+      pendingImagesRef.current = next;
+      return next;
+    });
+    revokePendingImages(savedImages);
+    return nextContent;
+  }, []);
+
   const performSave = useCallback(
     async (force: boolean): Promise<boolean> => {
       // 非强制保存（自动保存、切换前保存）在没有未保存修改时直接视为成功
@@ -1115,14 +1010,19 @@ export function MainWindow({
           settleSaveState(contentValueRef.current === contentSnapshot ? "saved" : "dirty");
         } else {
           const category = notesRef.current.find((note) => note.id === id)?.category ?? "";
+          const persistedContent = await persistPendingImages(id, contentSnapshot);
+          if (persistedContent !== contentSnapshot && stillCurrent()) {
+            contentValueRef.current = persistedContent;
+            setContent(persistedContent);
+          }
           const note = await updateNote(id, {
             title: titleSnapshot,
-            content: contentSnapshot,
+            content: persistedContent,
             category,
           });
           replaceNoteMetadata(note);
           const contentChanged =
-            contentValueRef.current !== contentSnapshot || titleValueRef.current !== titleSnapshot;
+            contentValueRef.current !== persistedContent || titleValueRef.current !== titleSnapshot;
           settleSaveState(contentChanged ? "dirty" : "saved");
         }
         return true;
@@ -1132,7 +1032,7 @@ export function MainWindow({
         return false;
       }
     },
-    [replaceNoteMetadata],
+    [replaceNoteMetadata, persistPendingImages],
   );
 
   const saveCurrentNote = useCallback(
@@ -1190,12 +1090,38 @@ export function MainWindow({
       if ((event.ctrlKey || event.metaKey) && event.key === "s") {
         event.preventDefault();
         void saveCurrentNote(true);
+        return;
+      }
+
+      const textarea = contentRef.current;
+      if (!textarea || document.activeElement !== textarea) return;
+      const modifier = event.ctrlKey || event.metaKey;
+      if (!modifier) return;
+
+      let action: FormatAction | null = null;
+      const key = event.key.toLowerCase();
+      if (key === "b") action = "bold";
+      else if (key === "i") action = "italic";
+      else if (event.altKey && key === "h") action = "heading";
+      else if (event.altKey && key === "t") action = "todo";
+      else if (event.shiftKey && event.key === "7") action = "ol";
+      else if (event.shiftKey && event.key === "8") action = "ul";
+
+      if (action) {
+        event.preventDefault();
+        applyMarkdownFormat({
+          textarea,
+          action,
+          translate: t,
+          setContent,
+          markDirty,
+        });
       }
     }
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [saveCurrentNote]);
+  }, [saveCurrentNote, t]);
 
   useEffect(() => {
     if (!selectedId || saveState !== "dirty") return undefined;
@@ -1569,32 +1495,56 @@ export function MainWindow({
     setSaveState("dirty");
   };
 
-  const ensureNoteSaved = useCallback(async (): Promise<string | null> => {
-    if (selectedId) return selectedId;
-    try {
-      const note = await createNote({ title, content, category: activeCategory });
-      replaceNoteMetadata(note);
-      applyNote(note);
-      return note.id;
-    } catch {
-      return null;
-    }
-  }, [selectedId, title, content, activeCategory, replaceNoteMetadata, applyNote]);
-
   const {
     handlePaste: imagePasteHandler,
     handleDrop: imageDropHandler,
     handleDragOver: imageDragOverHandler,
   } = useImagePaste({
-    noteId: selectedId,
     textareaRef: contentRef,
     setContent,
     markDirty,
-    onEnsureNoteSaved: ensureNoteSaved,
+    onAddPendingImages: addPendingImages,
     disabled: isExternal,
     onError: showToast,
     t,
   });
+
+  const handleImportImage = async () => {
+    if (!selectedId || isExternal) {
+      showToast(t("main.images.managedOnly", { defaultValue: "图片导入仅支持应用内笔记" }), "info");
+      return;
+    }
+    try {
+      const filePath = await chooseNoteImage();
+      if (!filePath) return;
+      const imageData = await readExternalImage(filePath);
+      const pendingImage = createPendingImage(imageData);
+      addPendingImages([pendingImage]);
+      const textarea = contentRef.current;
+      if (textarea) {
+        insertTextAtCursor(textarea, setContent, pendingImageMarkdown(pendingImage.tempId));
+      } else {
+        const insertion = `\n${pendingImageMarkdown(pendingImage.tempId)}\n`;
+        const nextContent = contentValueRef.current + insertion;
+        contentValueRef.current = nextContent;
+        setContent(nextContent);
+      }
+      markDirty();
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  };
+
+  const handleClearNoteContent = () => {
+    if (!selectedId) return;
+    setContent("");
+    contentValueRef.current = "";
+    revokePendingImages(Object.values(pendingImagesRef.current));
+    pendingImagesRef.current = {};
+    setPendingImages({});
+    markDirty();
+    setClearConfirm(false);
+  };
 
   const handleCleanUnusedImages = async () => {
     if (!selectedId || isExternal) return;
@@ -2739,6 +2689,15 @@ export function MainWindow({
                 </button>
 
                 <button
+                  onClick={() => void handleImportImage()}
+                  disabled={!selectedId || isExternal}
+                  className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  title={t("main.images.import", { defaultValue: "导入图片" })}
+                >
+                  {t("main.images.importShort", { defaultValue: "图片" })}
+                </button>
+
+                <button
                   onClick={() => void saveCurrentNote(true)}
                   disabled={!selectedId || saveState === "saving"}
                   className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
@@ -2746,6 +2705,37 @@ export function MainWindow({
                 >
                   {t("common.save", { defaultValue: "保存" })}
                 </button>
+
+                {clearConfirm ? (
+                  <div className="flex items-center gap-1 ml-1 animate-delete-confirm">
+                    <span className="text-[11px] text-amber-500 whitespace-nowrap">
+                      {t("main.editor.confirmClear", { defaultValue: "确认清空？" })}
+                    </span>
+                    <button
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={handleClearNoteContent}
+                      className="px-2 h-6 rounded-md text-[11px] text-cloud bg-amber-500 hover:bg-amber-600 transition-colors cursor-pointer whitespace-nowrap outline-none"
+                    >
+                      {t("common.clear", { defaultValue: "清空" })}
+                    </button>
+                    <button
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => setClearConfirm(false)}
+                      className="px-2 h-6 rounded-md text-[11px] text-ink-faint hover:text-ink-soft hover:bg-paper-warm transition-colors cursor-pointer outline-none"
+                    >
+                      {t("common.cancel", { defaultValue: "取消" })}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setClearConfirm(true)}
+                    disabled={!selectedId || !content}
+                    className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-amber-500 hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                    title={t("main.editor.clearContent", { defaultValue: "清空正文" })}
+                  >
+                    {t("common.clear", { defaultValue: "清空" })}
+                  </button>
+                )}
 
                 {deleteConfirm ? (
                   <div
@@ -2890,13 +2880,13 @@ export function MainWindow({
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => {
                               if (contentRef.current) {
-                                applyFormat(
-                                  contentRef.current,
-                                  button.action,
-                                  t,
+                                applyMarkdownFormat({
+                                  textarea: contentRef.current,
+                                  action: button.action,
+                                  translate: t,
                                   setContent,
                                   markDirty,
-                                );
+                                });
                               }
                             }}
                             className={`w-6 h-6 flex items-center justify-center rounded text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer ${button.style}`}
@@ -2922,6 +2912,7 @@ export function MainWindow({
                           className="w-full h-full leading-[1.9] text-ink-soft font-body placeholder:text-ink-ghost/40"
                           style={{
                             fontSize: `${settingsConfig?.fontSize ?? 14}px`,
+                            fontFamily: noteFontFamily,
                             tabSize: `var(--tab-indent-size, 2)`,
                           }}
                           placeholder={t("main.editor.contentPlaceholder", {
@@ -2975,6 +2966,8 @@ export function MainWindow({
                           fontSize={settingsConfig?.fontSize ?? 14}
                           renderHtml={settingsConfig?.renderHtmlMarkdown ?? false}
                           imageBaseDir={imageBaseDir ?? undefined}
+                          fontFamily={noteFontFamily}
+                          pendingImages={pendingImageUrls}
                         />
                       </div>
                     </div>

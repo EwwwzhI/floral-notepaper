@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { ExternalImageData } from "./pendingImages";
 
 export function saveImage(noteId: string, data: number[], extension: string): Promise<string> {
   return invoke("images_save", { noteId, data, extension });
@@ -6,6 +7,10 @@ export function saveImage(noteId: string, data: number[], extension: string): Pr
 
 export function saveImageFromPath(noteId: string, filePath: string): Promise<string> {
   return invoke("images_save_from_path", { noteId, filePath });
+}
+
+export function readExternalImage(filePath: string): Promise<ExternalImageData> {
+  return invoke("images_read_external", { filePath });
 }
 
 export function getImagesBaseDir(): Promise<string> {

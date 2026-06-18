@@ -195,6 +195,18 @@
       "new": "新增",
       "open": "開啟"
     },
+    "toolbar": {
+      "bold": "粗體",
+      "heading1": "一級標題",
+      "heading2": "二級標題",
+      "heading3": "三級標題",
+      "italic": "斜體",
+      "ol": "有序列表",
+      "redo": "重做",
+      "todo": "待辦",
+      "todoToggle": "切換完成",
+      "undo": "復原"
+    },
     "tooltip": {
       "close": "關閉",
       "openInEditor": "在編輯器中開啟",

@@ -15,6 +15,7 @@
     "back": "返回",
     "blankNote": "空白笔记",
     "cancel": "取消",
+    "clear": "清空",
     "default": "默认",
     "delete": "删除",
     "externalFileCount": "{{count}} 个外部文件",
@@ -84,6 +85,8 @@
     },
     "editor": {
       "confirmDelete": "确认删除？",
+      "confirmClear": "确认清空？",
+      "clearContent": "清空正文",
       "contentPlaceholder": "开始写作……",
       "emptyHint": "选择或新建一篇笔记",
       "pinToTile": "钉为磁贴",
@@ -106,7 +109,8 @@
       "headingText": "标题",
       "italicText": "斜体文本",
       "listItem": "列表项",
-      "quoteText": "引用文本"
+      "quoteText": "引用文本",
+      "todoItem": "待办事项"
     },
     "search": {
       "empty": "还没有笔记",
@@ -121,7 +125,10 @@
     "images": {
       "cleanUnused": "清理未使用图片",
       "cleaned": "已清理 {{count}} 张图片",
-      "cleanedNone": "没有需要清理的图片"
+      "cleanedNone": "没有需要清理的图片",
+      "import": "导入图片",
+      "importShort": "图片",
+      "managedOnly": "图片导入仅支持应用内笔记"
     },
     "statusBar": {
       "byteSize": "{{size}} KB",
@@ -146,6 +153,7 @@
       "italic": "斜体",
       "ol": "有序列表",
       "quote": "引用",
+      "todo": "待办",
       "ul": "无序列表"
     },
     "window": {
@@ -195,6 +203,18 @@
       "new": "新建",
       "open": "打开"
     },
+    "toolbar": {
+      "bold": "粗体",
+      "heading1": "一级标题",
+      "heading2": "二级标题",
+      "heading3": "三级标题",
+      "italic": "斜体",
+      "ol": "有序列表",
+      "redo": "重做",
+      "todo": "待办",
+      "todoToggle": "切换完成",
+      "undo": "撤销"
+    },
     "tooltip": {
       "close": "关闭",
       "openInEditor": "在编辑器中打开",
@@ -219,6 +239,12 @@
     "fontSize": {
       "editor": "编辑器字号",
       "surface": "小窗/磁贴字号"
+    },
+    "fontFamily": {
+      "label": "应用字体",
+      "searchSystem": "搜索系统字体…",
+      "system": "跟随系统",
+      "systemPlaceholder": "选择系统字体"
     },
     "locale": {
       "enUS": "English",

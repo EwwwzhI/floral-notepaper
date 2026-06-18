@@ -43,6 +43,20 @@ export async function chooseBackgroundImage(): Promise<string | null> {
   return typeof path === "string" ? path : null;
 }
 
+export async function chooseNoteImage(): Promise<string | null> {
+  const path = await open({
+    directory: false,
+    multiple: false,
+    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"] }],
+  });
+
+  return typeof path === "string" ? path : null;
+}
+
+export function listSystemFonts(): Promise<string[]> {
+  return invoke("fonts_list_system");
+}
+
 export function normalizeViewMode(value: string): ViewMode {
   if (value === "edit" || value === "split" || value === "preview") {
     return value;

@@ -19,6 +19,24 @@ const LEGACY_MACOS_GLOBAL_SHORTCUTS: [&str; 5] = [
     "Ctrl+Alt+Space",
 ];
 const MACOS_SHORTCUT_MIGRATION_MARKER: &str = ".macos-shortcut-default-v3";
+const DEFAULT_NOTE_FONT_FAMILY: &str = "system";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomFont {
+    pub id: String,
+    pub name: String,
+    pub file_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalImageData {
+    pub file_name: String,
+    pub extension: String,
+    pub mime_type: String,
+    pub data: Vec<u8>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +66,10 @@ pub struct AppConfig {
     pub font_size: u32,
     #[serde(default = "default_surface_font_size")]
     pub surface_font_size: u32,
+    #[serde(default = "default_note_font_family")]
+    pub note_font_family: String,
+    #[serde(default)]
+    pub custom_fonts: Vec<CustomFont>,
     #[serde(default = "default_tab_indent_size")]
     pub tab_indent_size: u32,
     #[serde(default = "default_external_file_auto_save")]
@@ -638,6 +660,7 @@ impl NoteStore {
         self.migrate_data_dir_if_relocated(&mut config);
         config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
         config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
+        normalize_note_font_config(&mut config);
         write_json_atomic(&path, &config)?;
         fs::create_dir_all(self.data_dir.join("notes"))?;
         if self.migrate_macos_shortcut_default(&mut config)? {
@@ -650,6 +673,7 @@ impl NoteStore {
         self.ensure_config_dir()?;
         config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
         config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
+        normalize_note_font_config(&mut config);
         is_safe_data_dir(&self.data_dir)?;
         fs::create_dir_all(self.data_dir.join("notes"))?;
         write_json_atomic(&self.config_path(), &config)?;
@@ -808,14 +832,7 @@ impl NoteStore {
         self.ensure_storage()?;
         self.find_metadata(note_id)?;
 
-        const ALLOWED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
-        let ext = extension.to_ascii_lowercase();
-        if !ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
-            return Err(AppError::new(
-                "unsupportedImageFormat",
-                format!("不支持的图片格式: {ext}"),
-            ));
-        }
+        let ext = normalize_image_extension(extension)?;
 
         let dir = self.images_dir(note_id);
         fs::create_dir_all(&dir)?;
@@ -824,6 +841,30 @@ impl NoteStore {
         fs::write(dir.join(&file_name), data)?;
 
         Ok(format!("images/{note_id}/{file_name}"))
+    }
+
+    pub fn read_external_image(&self, path: &Path) -> Result<ExternalImageData, AppError> {
+        if !path.is_file() {
+            return Err(AppError::new("invalidImageSource", "图片文件不存在"));
+        }
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let ext = normalize_image_extension(extension)?;
+        let data = fs::read(path)?;
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("image")
+            .to_string();
+        let mime_type = image_mime_type(&ext).to_string();
+        Ok(ExternalImageData {
+            file_name,
+            extension: ext,
+            mime_type,
+            data,
+        })
     }
 
     pub fn delete_note_images(&self, note_id: &str) -> Result<(), AppError> {
@@ -1059,6 +1100,8 @@ impl NoteStore {
             theme: default_theme(),
             font_size: default_font_size(),
             surface_font_size: default_surface_font_size(),
+            note_font_family: default_note_font_family(),
+            custom_fonts: Vec::new(),
             tab_indent_size: default_tab_indent_size(),
             external_file_auto_save: default_external_file_auto_save(),
             background_image_path: String::new(),
@@ -1125,6 +1168,7 @@ impl NoteStore {
 
             config.background_image_path =
                 remap_path_prefix(&config.background_image_path, old_dir, &resolved_data_dir);
+            normalize_note_font_config(&mut config);
             config.data_dir = Some(resolved_data_dir.to_string_lossy().to_string());
             config.notes_dir = None;
             config.last_known_base_dir = None;
@@ -1557,6 +1601,31 @@ fn is_markdown_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn normalize_image_extension(extension: &str) -> Result<String, AppError> {
+    const ALLOWED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+    let ext = extension.to_ascii_lowercase();
+    if ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
+        Ok(ext)
+    } else {
+        Err(AppError::new(
+            "unsupportedImageFormat",
+            format!("不支持的图片格式: {ext}"),
+        ))
+    }
+}
+
+fn image_mime_type(extension: &str) -> &'static str {
+    match extension {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
 fn imported_markdown_title(path: &Path, content: &str) -> String {
     let first_line = content.lines().next().unwrap_or_default();
     let first_line = first_line.trim_start_matches('\u{feff}').trim_start();
@@ -1603,6 +1672,25 @@ fn default_font_size() -> u32 {
 
 fn default_surface_font_size() -> u32 {
     14
+}
+
+fn default_note_font_family() -> String {
+    DEFAULT_NOTE_FONT_FAMILY.into()
+}
+
+fn normalize_note_font_config(config: &mut AppConfig) {
+    config.custom_fonts.clear();
+
+    let is_system_default = config.note_font_family == "system";
+    let is_system = config
+        .note_font_family
+        .strip_prefix("system:")
+        .map(|family| !family.trim().is_empty())
+        .unwrap_or(false);
+
+    if !is_system_default && !is_system {
+        config.note_font_family = default_note_font_family();
+    }
 }
 
 fn default_tab_indent_size() -> u32 {
@@ -1802,6 +1890,8 @@ mod tests {
             theme: "dark".into(),
             font_size: 16,
             surface_font_size: 16,
+            note_font_family: "system".into(),
+            custom_fonts: Vec::new(),
             tab_indent_size: 2,
             external_file_auto_save: true,
             background_image_path: String::new(),
@@ -1882,6 +1972,7 @@ mod tests {
         assert_eq!(loaded.locale, "zh-CN");
         assert_eq!(loaded.font_size, 14);
         assert_eq!(loaded.surface_font_size, 14);
+        assert_eq!(loaded.note_font_family, "system");
     }
 
     fn legacy_config_json(notes_dir: &Path, background_image_path: &str) -> String {

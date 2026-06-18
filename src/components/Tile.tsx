@@ -17,6 +17,8 @@ export interface TileProps extends Omit<
   fontSize?: number;
   renderMarkdown?: boolean;
   imageBaseDir?: string;
+  noteFontFamily?: string;
+  pendingImages?: Record<string, string>;
 }
 
 const MARK_SIZE = 8;
@@ -77,6 +79,8 @@ export function Tile({
   fontSize = 14,
   renderMarkdown = false,
   imageBaseDir,
+  noteFontFamily,
+  pendingImages,
   className = "",
   style,
   children,
@@ -127,12 +131,14 @@ export function Tile({
                 fontSize={fontSize}
                 renderHtml={false}
                 imageBaseDir={imageBaseDir}
+                fontFamily={noteFontFamily}
+                pendingImages={pendingImages}
               />
             </div>
           ) : (
             <div
-              className="leading-[1.8] whitespace-pre-wrap font-body"
-              style={{ color: contentColor, fontSize: `${fontSize}px` }}
+              className="leading-[1.8] whitespace-pre-wrap"
+              style={{ color: contentColor, fontSize: `${fontSize}px`, fontFamily: noteFontFamily }}
             >
               {content}
             </div>

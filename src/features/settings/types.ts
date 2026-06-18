@@ -5,6 +5,8 @@ export type ThemeOption = "light" | "dark" | "system";
 export type TileColorMode = "system" | "custom";
 export type BackgroundFit = "cover" | "contain" | "repeat";
 
+export type NoteFontFamily = "system" | `system:${string}`;
+
 export interface AppConfig {
   locale: string;
   dataDir: string;
@@ -19,6 +21,7 @@ export interface AppConfig {
   theme: ThemeOption;
   fontSize: number;
   surfaceFontSize: number;
+  noteFontFamily: NoteFontFamily;
   tabIndentSize: number;
   externalFileAutoSave: boolean;
   rememberSurfaceSize: boolean;
