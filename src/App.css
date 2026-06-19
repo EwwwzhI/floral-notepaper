@@ -840,6 +840,7 @@ input::placeholder {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   pointer-events: none;
+  transform: translate(-1px, 1px);
 }
 
 .memo-text-row.has-link > .memo-format-overlay {
@@ -847,6 +848,7 @@ input::placeholder {
 }
 
 .memo-todo-row > .memo-format-overlay {
+  top: 4px;
   left: 28px;
   right: 24px;
 }
