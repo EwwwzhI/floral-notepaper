@@ -975,7 +975,7 @@ impl NoteStore {
             output.push_str(&remaining[..index]);
             let after_marker = &remaining[index + marker.len()..];
             let file_name_len = after_marker
-                .find(|ch: char| matches!(ch, ')' | '>' | '\r' | '\n' | ' ' | '\t'))
+                .find([')', '>', '\r', '\n', ' ', '\t'])
                 .unwrap_or(after_marker.len());
             let file_name = &after_marker[..file_name_len];
             let is_image_target = output.ends_with("](");
