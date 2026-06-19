@@ -1,5 +1,3 @@
-**简体中文** | [繁體中文](Docs/CONTRIBUTING_zh-HK.md) | [English](Docs/CONTRIBUTING_en-US.md)
-
 # 贡献指南
 
 感谢你对花笺（Floral Notepaper）的关注！这份指南会帮助你了解如何参与项目开发。

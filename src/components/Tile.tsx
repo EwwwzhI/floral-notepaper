@@ -2,8 +2,9 @@ import chroma from "chroma-js";
 import type { CSSProperties, HTMLAttributes } from "react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { parseMemoContent, serializeMemoDocument } from "../features/memo/document";
 import { DEFAULT_TILE_COLOR, normalizeTileColor } from "../features/settings/tileColor";
-import { MarkdownPreview } from "../features/markdown/MarkdownPreview";
+import { MemoRenderer } from "./MemoRenderer";
 
 export interface TileProps extends Omit<
   HTMLAttributes<HTMLDivElement>,
@@ -15,10 +16,10 @@ export interface TileProps extends Omit<
   width?: number | string;
   rotation?: number;
   fontSize?: number;
-  renderMarkdown?: boolean;
   imageBaseDir?: string;
   noteFontFamily?: string;
   pendingImages?: Record<string, string>;
+  onContentChange?: (content: string) => void;
 }
 
 const MARK_SIZE = 8;
@@ -77,10 +78,10 @@ export function Tile({
   width = 260,
   rotation = 0,
   fontSize = 14,
-  renderMarkdown = false,
   imageBaseDir,
   noteFontFamily,
   pendingImages,
+  onContentChange,
   className = "",
   style,
   children,
@@ -90,11 +91,13 @@ export function Tile({
   const tileColor = normalizeTileColor(color);
   const { borderColor, cornerColor, titleColor, contentColor, emptyColor } = useMemo(() => {
     const isLightBg = chroma(tileColor).luminance() > 0.18;
-    const mixTarget = isLightBg ? "#1a1a18" : "#ffffff";
+    const mixTarget = isLightBg ? "#5c6a72" : "#d3c6aa";
     return {
       borderColor: chroma.mix(tileColor, mixTarget, 0.18).alpha(0.55).css(),
       cornerColor: chroma.mix(tileColor, mixTarget, 0.3).alpha(0.26).css(),
-      titleColor: chroma.mix(tileColor, mixTarget, 0.4).alpha(0.5).css(),
+      titleColor: isLightBg
+        ? chroma.mix("#8da101", tileColor, 0.12).css()
+        : chroma.mix("#a7c080", "#d3c6aa", 0.16).css(),
       contentColor: chroma.mix(tileColor, mixTarget, 0.65).alpha(0.85).css(),
       emptyColor: chroma.mix(tileColor, mixTarget, 0.25).alpha(0.4).css(),
     };
@@ -111,7 +114,7 @@ export function Tile({
   return (
     <div
       {...divProps}
-      className={`app-surface-frame relative border overflow-hidden select-none shadow-[0_1px_8px_rgba(26,26,24,0.04)] hover:shadow-[0_6px_24px_rgba(26,26,24,0.07)] ${className}`}
+      className={`app-surface-frame relative border overflow-hidden select-none shadow-[0_1px_8px_var(--color-shadow)] hover:shadow-[0_6px_24px_var(--color-shadow-deep)] ${className}`}
       style={mergedStyle}
     >
       <div className="px-4 pt-4 pb-4 h-full overflow-y-auto scrollbar-hidden">
@@ -124,25 +127,17 @@ export function Tile({
           </div>
         )}
         {content ? (
-          renderMarkdown ? (
-            <div style={{ color: contentColor }}>
-              <MarkdownPreview
-                content={content}
-                fontSize={fontSize}
-                renderHtml={false}
-                imageBaseDir={imageBaseDir}
-                fontFamily={noteFontFamily}
-                pendingImages={pendingImages}
-              />
-            </div>
-          ) : (
-            <div
-              className="leading-[1.8] whitespace-pre-wrap"
-              style={{ color: contentColor, fontSize: `${fontSize}px`, fontFamily: noteFontFamily }}
-            >
-              {content}
-            </div>
-          )
+          <div style={{ color: contentColor }}>
+            <MemoRenderer
+              content={serializeMemoDocument(parseMemoContent(content))}
+              fontSize={fontSize}
+              imageBaseDir={imageBaseDir}
+              fontFamily={noteFontFamily}
+              pendingImages={pendingImages}
+              onChange={onContentChange}
+              compact
+            />
+          </div>
         ) : (
           <div
             className="font-body text-center py-6"

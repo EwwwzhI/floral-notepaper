@@ -20,7 +20,7 @@ export function getNoteContextMenuItems(translate: TFunction = t): NoteContextMe
     },
     {
       action: "delete",
-      label: translate("noteMenu.delete", { defaultValue: "删除笔记" }),
+      label: translate("noteMenu.delete", { defaultValue: "删除便签" }),
       tone: "danger",
     },
   ];

@@ -6,25 +6,22 @@ import {
   chooseBackgroundImage,
   listSystemFonts,
 } from "../features/settings/api";
-import { UpdateSettingsSection } from "../features/update/UpdateSettingsSection";
-import type {
-  AppConfig,
-  BackgroundFit,
-  NoteFontFamily,
-  ThemeOption,
-  TileColorMode,
-  ViewMode,
-} from "../features/settings/types";
 import {
   formatHeldKeys,
   hotkeyToConfigString,
   isValidGlobalShortcut,
   shortcutPlatform,
 } from "../features/settings/shortcutRecorder";
-import { useShortcutRecorder } from "../features/settings/useShortcutRecorder";
 import { DEFAULT_TILE_COLOR, normalizeTileColor } from "../features/settings/tileColor";
 import { applyTheme, watchSystemTheme } from "../features/settings/theme";
-import { LOCALE_OPTIONS } from "../locales/locale-whitelist";
+import type {
+  AppConfig,
+  BackgroundFit,
+  NoteFontFamily,
+  ThemeOption,
+  TileColorMode,
+} from "../features/settings/types";
+import { useShortcutRecorder } from "../features/settings/useShortcutRecorder";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
 
 interface SettingsPanelProps {
@@ -41,38 +38,18 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
   const setConfigValue = <Key extends keyof AppConfig>(key: Key, value: AppConfig[Key]) => {
     onChange({ ...config, [key]: value });
   };
-  const tileColorModes = useMemo<Array<{ value: TileColorMode; label: string }>>(
-    () => [
-      {
-        value: "system",
-        label: t("settings.tileColor.followTheme", { defaultValue: "跟随主题" }),
-      },
-      {
-        value: "custom",
-        label: t("settings.tileColor.custom", { defaultValue: "自定义" }),
-      },
-    ],
-    [t],
-  );
   const themeOptions = useMemo<Array<{ value: ThemeOption; label: string }>>(
     () => [
       { value: "light", label: t("settings.theme.light", { defaultValue: "浅色" }) },
       { value: "dark", label: t("settings.theme.dark", { defaultValue: "深色" }) },
-      {
-        value: "system",
-        label: t("settings.theme.system", { defaultValue: "跟随系统" }),
-      },
+      { value: "system", label: t("settings.theme.system", { defaultValue: "跟随系统" }) },
     ],
     [t],
   );
-  const viewModes = useMemo<Array<{ value: ViewMode; label: string }>>(
+  const tileColorModes = useMemo<Array<{ value: TileColorMode; label: string }>>(
     () => [
-      { value: "edit", label: t("settings.defaultView.edit", { defaultValue: "编辑" }) },
-      { value: "split", label: t("settings.defaultView.split", { defaultValue: "分栏" }) },
-      {
-        value: "preview",
-        label: t("settings.defaultView.preview", { defaultValue: "预览" }),
-      },
+      { value: "system", label: t("settings.tileColor.followTheme", { defaultValue: "跟随主题" }) },
+      { value: "custom", label: t("settings.tileColor.custom", { defaultValue: "自定义" }) },
     ],
     [t],
   );
@@ -84,16 +61,8 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
     ],
     [t],
   );
-  const localeOptions = useMemo(
-    () =>
-      LOCALE_OPTIONS.map(({ value, labelKey, defaultLabel }) => ({
-        value,
-        label: t(labelKey, { defaultValue: defaultLabel }),
-      })),
-    [t],
-  );
   const fontOptions = useMemo<Array<{ value: NoteFontFamily; label: string }>>(() => {
-    if (config.noteFontFamily?.startsWith("system:")) {
+    if (config.noteFontFamily.startsWith("system:")) {
       return [
         {
           value: config.noteFontFamily,
@@ -126,9 +95,9 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
   }, []);
 
   return (
-    <aside className="w-[360px] h-full shrink-0 border-l border-paper-deep/30 bg-cloud/92 backdrop-blur-sm flex flex-col">
-      <div className="flex items-center justify-between h-11 px-4 border-b border-paper-deep/25">
-        <h2 className="text-[13px] font-display font-medium text-ink-soft">
+    <aside className="w-[360px] h-full shrink-0 border-l border-paper-deep/45 bg-cloud/95 backdrop-blur-sm flex flex-col">
+      <div className="flex items-center justify-between h-11 px-4 border-b border-paper-deep/35">
+        <h2 className="text-[13px] font-display font-medium text-bamboo">
           {t("settings.title", { defaultValue: "应用设置" })}
         </h2>
         <button
@@ -152,25 +121,19 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-hidden px-4 py-4 space-y-5">
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.theme.label", { defaultValue: "主题" })}
-          </label>
+        <SettingGroup label={t("settings.theme.label", { defaultValue: "主题" })}>
           <SlidingButtonGroup
             options={themeOptions}
             value={config.theme}
-            onChange={(v: ThemeOption) => {
-              setConfigValue("theme", v);
-              applyTheme(v);
-              watchSystemTheme(v);
+            onChange={(value: ThemeOption) => {
+              setConfigValue("theme", value);
+              applyTheme(value);
+              watchSystemTheme(value);
             }}
           />
-        </section>
+        </SettingGroup>
 
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.dataDir", { defaultValue: "数据目录" })}
-          </label>
+        <SettingGroup label={t("settings.dataDir", { defaultValue: "数据目录" })}>
           <div className="flex gap-2">
             <input
               type="text"
@@ -186,18 +149,7 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
               {t("settings.selectFolder", { defaultValue: "选择文件夹" })}
             </button>
           </div>
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.locale.label", { defaultValue: "语言" })}
-          </label>
-          <SlidingButtonGroup
-            options={localeOptions}
-            value={config.locale}
-            onChange={(value) => setConfigValue("locale", value)}
-          />
-        </section>
+        </SettingGroup>
 
         <section className="space-y-2">
           <ToggleRow
@@ -211,178 +163,88 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             onChange={(checked) => setConfigValue("autostart", checked)}
           />
           <ToggleRow
-            label={t("settings.autoSave.note", { defaultValue: "自动保存笔记" })}
-            checked={config.noteAutoSave}
-            onChange={(checked) => setConfigValue("noteAutoSave", checked)}
-          />
-          <ToggleRow
-            label={t("settings.autoSave.surface", { defaultValue: "小窗笔记自动保存" })}
-            checked={config.noteSurfaceAutoSave}
-            onChange={(checked) => setConfigValue("noteSurfaceAutoSave", checked)}
-          />
-          <ToggleRow
-            label={t("settings.autoSave.externalFile", { defaultValue: "外部文件自动保存" })}
-            checked={config.externalFileAutoSave}
-            onChange={(checked) => setConfigValue("externalFileAutoSave", checked)}
-          />
-          <ToggleRow
             label={t("settings.rememberSurfaceSize", { defaultValue: "记住小窗尺寸" })}
             checked={config.rememberSurfaceSize}
             onChange={(checked) => setConfigValue("rememberSurfaceSize", checked)}
           />
           <ToggleRow
-            label={t("settings.tileRenderMarkdown", { defaultValue: "磁贴渲染 Markdown" })}
-            checked={config.tileRenderMarkdown}
-            onChange={(checked) => setConfigValue("tileRenderMarkdown", checked)}
-          />
-          <ToggleRow
-            label={t("settings.renderHtmlMarkdown", { defaultValue: "允许 HTML 标签渲染" })}
-            checked={config.renderHtmlMarkdown}
-            onChange={(checked) => setConfigValue("renderHtmlMarkdown", checked)}
-          />
-          <ToggleRow
-            label={t("settings.splitScrollSync", { defaultValue: "分栏同步滚动" })}
-            checked={config.splitScrollSync ?? true}
-            onChange={(checked) => setConfigValue("splitScrollSync", checked)}
-          />
-        </section>
-
-        {/* 快捷键功能设置区域，与上方常规设置分开 */}
-        <section className="space-y-2">
-          <ToggleRow
-            label={t("settings.tileCtrlClose", { defaultValue: "Ctrl+右键快速关闭磁贴" })}
-            checked={config.tileCtrlClose}
-            onChange={(checked) => setConfigValue("tileCtrlClose", checked)}
-          />
-          <ToggleRow
             label={t("settings.openAtCursor", { defaultValue: "快捷键打开时跟随鼠标位置" })}
-            checked={config.openAtCursor ?? true}
+            checked={config.openAtCursor}
             onChange={(checked) => setConfigValue("openAtCursor", checked)}
           />
-          <div className="space-y-1.5">
-            <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
-              {t("settings.quickNoteShortcut", { defaultValue: "快捷记录快捷键" })}
-            </label>
-            <ShortcutRecorder
-              value={config.globalShortcut}
-              onChange={(v) => setConfigValue("globalShortcut", v)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="block text-[11px] font-body text-ink-faint/70 px-0.5">
-              {t("settings.visibilityShortcut", { defaultValue: "显示/隐藏窗口快捷键" })}
-            </label>
-            <ShortcutRecorder
-              value={config.toggleVisibilityShortcut}
-              onChange={(v) => setConfigValue("toggleVisibilityShortcut", v)}
-            />
-          </div>
         </section>
 
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.fontFamily.label", { defaultValue: "应用字体" })}
-          </label>
+        <section className="space-y-3">
+          <ShortcutField
+            label={t("settings.quickNoteShortcut", { defaultValue: "快捷便签快捷键" })}
+            value={config.globalShortcut}
+            onChange={(value) => setConfigValue("globalShortcut", value)}
+          />
+          <ShortcutField
+            label={t("settings.visibilityShortcut", { defaultValue: "显示/隐藏窗口快捷键" })}
+            value={config.toggleVisibilityShortcut}
+            onChange={(value) => setConfigValue("toggleVisibilityShortcut", value)}
+          />
+        </section>
+
+        <SettingGroup label={t("settings.fontFamily.label", { defaultValue: "应用字体" })}>
           <SlidingButtonGroup
             options={fontOptions}
-            value={config.noteFontFamily ?? "system"}
+            value={config.noteFontFamily}
             onChange={(value: NoteFontFamily) => setConfigValue("noteFontFamily", value)}
           />
-          <div className="space-y-1.5">
-            <input
-              type="text"
-              value={fontSearch}
-              onChange={(event) => setFontSearch(event.target.value)}
-              placeholder={t("settings.fontFamily.searchSystem", { defaultValue: "搜索系统字体…" })}
-              className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-body text-ink-soft outline-none placeholder:text-ink-ghost/60"
-            />
-            <select
-              value={config.noteFontFamily?.startsWith("system:") ? config.noteFontFamily : ""}
-              onChange={(event) =>
-                setConfigValue("noteFontFamily", (event.target.value || "system") as NoteFontFamily)
-              }
-              className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] font-body text-ink-soft outline-none"
-            >
-              <option value="">
-                {t("settings.fontFamily.systemPlaceholder", { defaultValue: "选择系统字体" })}
+          <input
+            type="text"
+            value={fontSearch}
+            onChange={(event) => setFontSearch(event.target.value)}
+            placeholder={t("settings.fontFamily.searchSystem", { defaultValue: "搜索系统字体…" })}
+            className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] text-ink-soft outline-none placeholder:text-ink-ghost/60"
+          />
+          <select
+            value={config.noteFontFamily.startsWith("system:") ? config.noteFontFamily : ""}
+            onChange={(event) =>
+              setConfigValue("noteFontFamily", (event.target.value || "system") as NoteFontFamily)
+            }
+            className="w-full h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[11px] text-ink-soft outline-none"
+          >
+            <option value="">
+              {t("settings.fontFamily.systemPlaceholder", { defaultValue: "选择系统字体" })}
+            </option>
+            {filteredSystemFonts.map((font) => (
+              <option key={font} value={`system:${font}`}>
+                {font}
               </option>
-              {filteredSystemFonts.map((font) => (
-                <option key={font} value={`system:${font}`}>
-                  {font}
-                </option>
-              ))}
-            </select>
-          </div>
-        </section>
+            ))}
+          </select>
+        </SettingGroup>
 
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.fontSize.editor", { defaultValue: "编辑器字号" })}
-          </label>
-          <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-            <input
-              type="range"
-              min={8}
-              max={30}
-              step={1}
-              value={config.fontSize ?? 14}
-              onChange={(event) => setConfigValue("fontSize", Number(event.target.value))}
-              className="flex-1 h-1 accent-bamboo cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
-            />
-            <span className="text-[12px] font-mono text-ink-soft tabular-nums w-8 text-right">
-              {config.fontSize ?? 14}px
-            </span>
-          </div>
-        </section>
+        <SettingGroup label={t("settings.fontSize.editor", { defaultValue: "编辑器字号" })}>
+          <RangeRow
+            value={config.fontSize}
+            min={8}
+            max={30}
+            step={1}
+            format={(value) => `${value}px`}
+            onChange={(value) => setConfigValue("fontSize", value)}
+          />
+        </SettingGroup>
 
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.fontSize.surface", { defaultValue: "小窗/磁贴字号" })}
-          </label>
-          <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-            <input
-              type="range"
-              min={8}
-              max={30}
-              step={1}
-              value={config.surfaceFontSize ?? 14}
-              onChange={(event) => setConfigValue("surfaceFontSize", Number(event.target.value))}
-              className="flex-1 h-1 accent-bamboo cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
-            />
-            <span className="text-[12px] font-mono text-ink-soft tabular-nums w-8 text-right">
-              {config.surfaceFontSize ?? 14}px
-            </span>
-          </div>
-        </section>
+        <SettingGroup label={t("settings.fontSize.surface", { defaultValue: "小窗/磁贴字号" })}>
+          <RangeRow
+            value={config.surfaceFontSize}
+            min={8}
+            max={30}
+            step={1}
+            format={(value) => `${value}px`}
+            onChange={(value) => setConfigValue("surfaceFontSize", value)}
+          />
+        </SettingGroup>
 
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.tabIndentSize", { defaultValue: "Tab 缩进宽��" })}
-          </label>
-          <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-            <input
-              type="range"
-              min={1}
-              max={8}
-              step={1}
-              value={config.tabIndentSize ?? 2}
-              onChange={(event) => setConfigValue("tabIndentSize", Number(event.target.value))}
-              className="flex-1 h-1 accent-bamboo cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
-            />
-            <span className="text-[12px] font-mono text-ink-soft tabular-nums w-10 text-right">
-              {config.tabIndentSize ?? 2}
-            </span>
-          </div>
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.tileColor.label", { defaultValue: "磁贴颜色" })}
-          </label>
+        <SettingGroup label={t("settings.tileColor.label", { defaultValue: "磁贴颜色" })}>
           <SlidingButtonGroup
             options={tileColorModes}
             value={config.tileColorMode}
-            onChange={(v: TileColorMode) => setConfigValue("tileColorMode", v)}
+            onChange={(value: TileColorMode) => setConfigValue("tileColorMode", value)}
           />
           {config.tileColorMode === "custom" && (
             <div className="flex items-center gap-2">
@@ -396,25 +258,20 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
                 type="text"
                 value={config.tileColor}
                 onChange={(event) => setConfigValue("tileColor", event.target.value)}
-                placeholder="#f6f3ec"
-                spellCheck={false}
                 className="min-w-0 flex-1 h-8 px-2.5 rounded-lg bg-paper-warm/70 border border-paper-deep/40 text-[12px] font-mono text-ink-soft outline-none"
               />
               <button
                 type="button"
                 onClick={() => setConfigValue("tileColor", DEFAULT_TILE_COLOR)}
-                className="h-8 px-2.5 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer whitespace-nowrap"
+                className="h-8 px-2.5 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-colors cursor-pointer"
               >
                 {t("common.default", { defaultValue: "默认" })}
               </button>
             </div>
           )}
-        </section>
+        </SettingGroup>
 
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.background.label", { defaultValue: "背景图片" })}
-          </label>
+        <SettingGroup label={t("settings.background.label", { defaultValue: "背景图片" })}>
           <div className="flex gap-2">
             <input
               type="text"
@@ -444,97 +301,38 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             >
               {t("settings.background.choose", { defaultValue: "选择" })}
             </button>
-            {config.backgroundImagePath && (
-              <button
-                type="button"
-                onClick={() => {
-                  localStorage.removeItem("backgroundImageName");
-                  setConfigValue("backgroundImagePath", "");
-                }}
-                className="h-8 px-3 rounded-lg border border-red-400/40 text-[11px] text-red-400 hover:bg-red-400/10 transition-colors cursor-pointer"
-              >
-                {t("settings.background.clear", { defaultValue: "清除" })}
-              </button>
-            )}
           </div>
           <SlidingButtonGroup
             options={backgroundFits}
             value={config.backgroundFit ?? "cover"}
             onChange={(value: BackgroundFit) => setConfigValue("backgroundFit", value)}
           />
-          <RangeRow
-            label={t("settings.background.dim", { defaultValue: "遮罩" })}
-            value={config.backgroundDim ?? 0.25}
-            min={0}
-            max={1}
-            step={0.01}
-            format={(value) => `${Math.round(value * 100)}%`}
-            onChange={(value) => setConfigValue("backgroundDim", value)}
-          />
-          <RangeRow
-            label={t("settings.background.scale", { defaultValue: "缩放" })}
-            value={config.backgroundScale ?? 1}
-            min={0.5}
-            max={2}
-            step={0.05}
-            format={(value) => `${Math.round(value * 100)}%`}
-            onChange={(value) => setConfigValue("backgroundScale", value)}
-          />
-          <RangeRow
-            label={t("settings.background.positionX", { defaultValue: "横向" })}
-            value={config.backgroundPositionX ?? 50}
-            min={0}
-            max={100}
-            step={1}
-            format={(value) => `${value}%`}
-            onChange={(value) => setConfigValue("backgroundPositionX", value)}
-          />
-          <RangeRow
-            label={t("settings.background.positionY", { defaultValue: "纵向" })}
-            value={config.backgroundPositionY ?? 50}
-            min={0}
-            max={100}
-            step={1}
-            format={(value) => `${value}%`}
-            onChange={(value) => setConfigValue("backgroundPositionY", value)}
-          />
-          <RangeRow
-            label={t("settings.background.blur", { defaultValue: "模糊" })}
-            value={config.backgroundBlur ?? 0}
-            min={0}
-            max={20}
-            step={1}
-            format={(value) => `${value}px`}
-            onChange={(value) => setConfigValue("backgroundBlur", value)}
-          />
-        </section>
-
-        <section className="space-y-2">
-          <label className="block text-[11px] font-body text-ink-faint">
-            {t("settings.defaultView.label", { defaultValue: "默认视图" })}
-          </label>
-          <SlidingButtonGroup
-            options={viewModes}
-            value={config.defaultViewMode}
-            onChange={(v) => setConfigValue("defaultViewMode", v)}
-          />
-        </section>
-
-        <UpdateSettingsSection mode="settingsOnly" />
+        </SettingGroup>
       </div>
     </aside>
   );
 }
 
-interface ToggleRowProps {
+function SettingGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-2">
+      <label className="block text-[11px] text-ink-faint">{label}</label>
+      {children}
+    </section>
+  );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  onChange,
+}: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
-}
-
-function ToggleRow({ label, checked, onChange }: ToggleRowProps) {
+}) {
   return (
-    <label className="flex items-center justify-between h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25 cursor-pointer">
+    <label className="flex items-center justify-between h-10 rounded-lg px-3 bg-paper-warm/55 border border-paper-deep/35 cursor-pointer">
       <span className="text-[12px] text-ink-soft">{label}</span>
       <input
         type="checkbox"
@@ -542,35 +340,38 @@ function ToggleRow({ label, checked, onChange }: ToggleRowProps) {
         onChange={(event) => onChange(event.target.checked)}
         className="sr-only"
       />
-      <div
-        className={`relative w-8 h-[18px] rounded-full transition-colors duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-          checked ? "bg-bamboo" : "bg-paper-deep/50"
+      <span
+        className={`relative w-8 h-[18px] rounded-full transition-colors duration-200 ${
+          checked ? "bg-bamboo" : "bg-paper-deep/55"
         }`}
       >
-        <div
-          className={`absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.15)] transition-transform duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        <span
+          className={`absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white shadow-sm transition-transform duration-200 ${
             checked ? "translate-x-[14px]" : "translate-x-0"
           }`}
         />
-      </div>
+      </span>
     </label>
   );
 }
 
-interface RangeRowProps {
-  label: string;
+function RangeRow({
+  value,
+  min,
+  max,
+  step,
+  format,
+  onChange,
+}: {
   value: number;
   min: number;
   max: number;
   step: number;
   format: (value: number) => string;
   onChange: (value: number) => void;
-}
-
-function RangeRow({ label, value, min, max, step, format, onChange }: RangeRowProps) {
+}) {
   return (
     <div className="flex items-center gap-3 h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-      <span className="w-9 text-[11px] text-ink-faint">{label}</span>
       <input
         type="range"
         min={min}
@@ -578,7 +379,7 @@ function RangeRow({ label, value, min, max, step, format, onChange }: RangeRowPr
         step={step}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="flex-1 h-1 accent-bamboo cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-paper-deep/50 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-bamboo [&::-webkit-slider-thumb]:-mt-[4.5px] [&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+        className="flex-1 accent-bamboo cursor-pointer"
       />
       <span className="w-10 text-right text-[11px] font-mono text-ink-soft tabular-nums">
         {format(value)}
@@ -587,14 +388,32 @@ function RangeRow({ label, value, min, max, step, format, onChange }: RangeRowPr
   );
 }
 
-interface ShortcutRecorderProps {
+function ShortcutField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
   value: string;
   onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-[11px] text-ink-faint">{label}</label>
+      <ShortcutRecorder value={value} onChange={onChange} />
+    </div>
+  );
 }
 
 type ShortcutMsg = { key: string; params?: Record<string, string> } | { raw: string };
 
-function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps) {
+function ShortcutRecorder({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
   const { t } = useTranslation();
   const [checkState, setCheckState] = useState<"idle" | "checking" | "ok" | "warning" | "error">(
     "idle",
@@ -602,65 +421,47 @@ function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps) {
   const [checkMsg, setCheckMsg] = useState<ShortcutMsg>({
     key: "settings.shortcut.forQuickNote",
   });
-  const shortcutCheckRequestId = useRef(0);
-  const isMounted = useRef(true);
+  const requestIdRef = useRef(0);
+  const mountedRef = useRef(true);
+  const containerRef = useRef<HTMLDivElement>(null);
   const platform = shortcutPlatform();
-
   const resolveMsg = (msg: ShortcutMsg): string =>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    "raw" in msg ? msg.raw : (t as any)(msg.key, msg.params);
+    "raw" in msg ? msg.raw : String(t(msg.key as never, msg.params as never));
 
   useEffect(() => {
-    isMounted.current = true;
+    mountedRef.current = true;
     return () => {
-      isMounted.current = false;
-      shortcutCheckRequestId.current += 1;
+      mountedRef.current = false;
+      requestIdRef.current += 1;
     };
   }, []);
 
-  const isCurrentShortcutCheck = (requestId: number) =>
-    isMounted.current && requestId === shortcutCheckRequestId.current;
-
-  const invalidateShortcutChecks = () => {
-    shortcutCheckRequestId.current += 1;
-  };
-
-  const markShortcutCleared = () => {
-    invalidateShortcutChecks();
+  const markCleared = () => {
+    requestIdRef.current += 1;
     setCheckState("idle");
     setCheckMsg({ key: "settings.shortcut.cleared" });
   };
 
-  const runShortcutCheck = async (shortcut: string, saveWhenAvailable: boolean) => {
-    // 未设置是合法状态，不需要调用后端做冲突检测。
+  const checkShortcut = async (shortcut: string, save: boolean) => {
     if (!shortcut) {
-      markShortcutCleared();
+      markCleared();
       return;
     }
-
-    const requestId = shortcutCheckRequestId.current + 1;
-    shortcutCheckRequestId.current = requestId;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setCheckState("checking");
     setCheckMsg({ key: "settings.shortcut.checking" });
     try {
       const result = await checkGlobalShortcut(shortcut);
-      if (!isCurrentShortcutCheck(requestId)) return;
-      const conflictMsg: ShortcutMsg = {
+      if (!mountedRef.current || requestId !== requestIdRef.current) return;
+      setCheckState(result.available ? "ok" : "warning");
+      setCheckMsg({
         key: `settings.shortcut.conflict.${result.conflictType}`,
         params: { shortcut },
-      };
-      if (result.available) {
-        setCheckState("ok");
-        setCheckMsg(conflictMsg);
-        if (saveWhenAvailable) {
-          onChange(shortcut);
-        }
-      } else {
-        setCheckState("warning");
-        setCheckMsg(conflictMsg);
-      }
+      });
+      if (result.available && save) onChange(shortcut);
     } catch (error) {
-      if (!isCurrentShortcutCheck(requestId)) return;
+      if (!mountedRef.current || requestId !== requestIdRef.current) return;
       setCheckState("error");
       setCheckMsg(
         error instanceof Error ? { raw: error.message } : { key: "settings.shortcut.checkFailed" },
@@ -670,38 +471,28 @@ function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps) {
 
   const recorder = useShortcutRecorder({
     onRecord: (shortcut) => {
-      if (shortcut === "") {
+      if (!shortcut) {
         onChange("");
-        markShortcutCleared();
+        markCleared();
       } else if (isValidGlobalShortcut(shortcut)) {
-        const configString = hotkeyToConfigString(shortcut, platform);
-        void runShortcutCheck(configString, true);
+        void checkShortcut(hotkeyToConfigString(shortcut, platform), true);
       } else {
-        invalidateShortcutChecks();
         setCheckState("warning");
         setCheckMsg({ key: "settings.shortcut.needsModifier" });
       }
     },
   });
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const clearShortcut = () => {
-    // 显式清除会保存为空值，后端据此注销旧的全局快捷键绑定。
-    recorder.cancelRecording();
-    onChange("");
-    markShortcutCleared();
-  };
 
   useEffect(() => {
     if (!recorder.isRecording) return;
-    const handleClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+    const handleClick = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         recorder.cancelRecording();
       }
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [recorder.isRecording, recorder.cancelRecording]);
+  }, [recorder]);
 
   const liveDisplay =
     recorder.isRecording && recorder.heldKeys.length > 0
@@ -713,64 +504,42 @@ function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps) {
       : checkState === "warning" || checkState === "error"
         ? "text-red-400"
         : "text-ink-ghost";
-  const isChecking = checkState === "checking";
 
   return (
-    <div ref={containerRef} className="relative space-y-1.5">
+    <div ref={containerRef} className="space-y-1.5">
       <div className="flex gap-2">
         <button
           type="button"
-          onClick={() => recorder.startRecording()}
-          className={`min-w-0 flex-1 h-8 px-2.5 rounded-lg border text-[12px] flex items-center gap-2 cursor-pointer transition-colors ${
+          onClick={recorder.startRecording}
+          className={`min-w-0 flex-1 h-8 px-2.5 rounded-lg border text-[12px] text-left cursor-pointer ${
             recorder.isRecording
-              ? "bg-bamboo-mist/40 border-bamboo"
-              : "bg-paper-warm/70 border-paper-deep/40 hover:border-paper-deep/60"
+              ? "bg-bamboo-mist/40 border-bamboo text-bamboo"
+              : "bg-paper-warm/70 border-paper-deep/40 text-ink-soft"
           }`}
         >
-          {recorder.isRecording ? (
-            <>
-              <span className="flex-1 min-w-0 text-left text-bamboo truncate">
-                {liveDisplay ||
-                  t("settings.shortcut.pressHint", {
-                    defaultValue: "按下快捷键；按 Delete 清空。",
-                  })}
-              </span>
-              <span className="text-[10px] text-ink-faint shrink-0">
-                {t("settings.shortcut.cancelHint", { defaultValue: "Esc 取消" })}
-              </span>
-            </>
-          ) : (
-            <>
-              <span
-                className={`flex-1 min-w-0 text-left truncate ${
-                  value ? "text-ink-soft" : "text-ink-ghost"
-                }`}
-              >
-                {value || t("settings.shortcut.notSet", { defaultValue: "未设置" })}
-              </span>
-              <span className="text-[10px] text-ink-ghost shrink-0">
-                {t("settings.shortcut.clickToRecord", { defaultValue: "点击录制" })}
-              </span>
-            </>
-          )}
+          {recorder.isRecording
+            ? liveDisplay || t("settings.shortcut.pressHint", { defaultValue: "按下快捷键" })
+            : value || t("settings.shortcut.notSet", { defaultValue: "未设置" })}
         </button>
         <button
           type="button"
           disabled={!value || recorder.isRecording}
-          onClick={clearShortcut}
-          aria-label={t("settings.shortcut.clear", { defaultValue: "清除" })}
-          title={t("settings.shortcut.clear", { defaultValue: "清除" })}
-          className="w-8 h-8 rounded-lg border border-paper-deep/45 text-[15px] leading-none text-ink-faint hover:text-red-400 hover:bg-paper-warm/70 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          onClick={() => {
+            recorder.cancelRecording();
+            onChange("");
+            markCleared();
+          }}
+          className="w-8 h-8 rounded-lg border border-paper-deep/45 text-ink-faint hover:text-red-400 disabled:opacity-40 cursor-pointer"
         >
           ×
         </button>
         <button
           type="button"
-          disabled={!value || isChecking || recorder.isRecording}
-          onClick={() => void runShortcutCheck(value, false)}
-          className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          disabled={!value || checkState === "checking" || recorder.isRecording}
+          onClick={() => void checkShortcut(value, false)}
+          className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-bamboo disabled:opacity-40 cursor-pointer"
         >
-          {isChecking
+          {checkState === "checking"
             ? t("settings.shortcut.checkingShort", { defaultValue: "检测中" })
             : t("settings.shortcut.check", { defaultValue: "检测" })}
         </button>

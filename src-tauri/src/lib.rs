@@ -2,7 +2,6 @@ pub mod desktop;
 pub mod json_io;
 pub mod locales;
 pub mod services;
-pub mod updater;
 
 use locales::Locale;
 use services::notes::{
@@ -416,7 +415,6 @@ pub fn try_exit_for_cli_version_or_help() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_cli::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
@@ -434,12 +432,6 @@ pub fn run() {
                 let _ = scope.allow_directory(data.join("backgrounds"), true);
                 let _ = scope.allow_directory(data.join("fonts"), true);
             }
-            let updater_state = updater::UpdaterState::new(app.package_info().version.to_string());
-            if let Err(error) = updater_state.initialize() {
-                eprintln!("failed to initialize updater infrastructure: {error}");
-            }
-            app.manage(updater_state);
-            updater::start_auto_check_scheduler(app.handle().clone());
             desktop::setup_desktop(app)?;
             Ok(())
         })
@@ -479,17 +471,6 @@ pub fn run() {
             open_tile_window,
             toggle_tile_window,
             open_note_in_editor,
-            updater::commands::update_status,
-            updater::commands::update_settings_get,
-            updater::commands::update_settings_save,
-            updater::commands::update_mirror_chyan_cdk_set,
-            updater::commands::update_mirror_chyan_cdk_clear,
-            updater::commands::update_mirror_chyan_cdk_get,
-            updater::commands::update_check,
-            updater::commands::update_download,
-            updater::commands::update_install,
-            updater::commands::update_install_prepare_report,
-            updater::commands::update_cancel,
             take_startup_file
         ])
         .build(tauri::generate_context!())

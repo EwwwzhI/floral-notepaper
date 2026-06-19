@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { AppConfig, ViewMode } from "./types";
+import type { AppConfig } from "./types";
 
 export interface ShortcutCheckResult {
   available: boolean;
@@ -55,12 +55,4 @@ export async function chooseNoteImage(): Promise<string | null> {
 
 export function listSystemFonts(): Promise<string[]> {
   return invoke("fonts_list_system");
-}
-
-export function normalizeViewMode(value: string): ViewMode {
-  if (value === "edit" || value === "split" || value === "preview") {
-    return value;
-  }
-
-  return "split";
 }

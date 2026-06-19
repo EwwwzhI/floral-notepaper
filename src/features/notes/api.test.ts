@@ -1,6 +1,12 @@
-import { i18n } from "../../locales";
 import { describe, expect, test } from "vitest";
-import { getErrorMessage } from "./api";
+import { getErrorMessage, markdownExportFileName } from "./api";
+
+describe("Markdown export", () => {
+  test("creates a safe Markdown file name from the note title", () => {
+    expect(markdownExportFileName('  周报: "六月" / 草稿  ')).toBe("周报_六月_草稿.md");
+    expect(markdownExportFileName("...")).toBe("无标题便签.md");
+  });
+});
 
 describe("notes api error localization", () => {
   test("localizes structured backend errors with interpolation details", () => {
@@ -20,22 +26,16 @@ describe("notes api error localization", () => {
         message: "unsupported globalShortcut shortcut config: Ctrl+",
         details: { field: "globalShortcut" },
       }),
-    ).toBe("快捷记录快捷键 配置无效");
+    ).toBe("快捷便签快捷键 配置无效");
   });
 
   test("parses serialized backend error strings when a structured payload is unavailable", () => {
-    expect(getErrorMessage("noteNotFound: Note note-1 was not found")).toBe("找不到该笔记");
+    expect(getErrorMessage("noteNotFound: Note note-1 was not found")).toBe("找不到该便签");
   });
 
   test("localizes serialized category errors when interpolation details can be recovered", () => {
-    const translate = i18n.getFixedT("en-US");
-
-    expect(getErrorMessage("categoryNotFound: 分类「工作」不存在", translate)).toBe(
-      'Category "工作" not found',
-    );
-    expect(getErrorMessage("categoryAlreadyExists: 分类「工作」已存在", translate)).toBe(
-      'Category "工作" already exists',
-    );
+    expect(getErrorMessage("categoryNotFound: 分类「工作」不存在")).toBe("分类「工作」不存在");
+    expect(getErrorMessage("categoryAlreadyExists: 分类「工作」已存在")).toBe("分类「工作」已存在");
   });
 
   test("falls back to the backend message for unknown error codes", () => {

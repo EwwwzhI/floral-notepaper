@@ -1,8 +1,8 @@
 import type { TileColorMode } from "./types";
 
-export const DEFAULT_TILE_COLOR = "#f6f3ec";
-export const SYSTEM_TILE_COLOR_LIGHT = "#f6f3ec";
-export const SYSTEM_TILE_COLOR_DARK = "#191919";
+export const DEFAULT_TILE_COLOR = "#fdf6e3";
+export const SYSTEM_TILE_COLOR_LIGHT = "#fdf6e3";
+export const SYSTEM_TILE_COLOR_DARK = "#2d353b";
 
 const FULL_HEX_COLOR = /^#?([0-9a-fA-F]{6})$/;
 const SHORT_HEX_COLOR = /^#?([0-9a-fA-F]{3})$/;

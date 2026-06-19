@@ -20,6 +20,7 @@ const LEGACY_MACOS_GLOBAL_SHORTCUTS: [&str; 5] = [
 ];
 const MACOS_SHORTCUT_MIGRATION_MARKER: &str = ".macos-shortcut-default-v3";
 const DEFAULT_NOTE_FONT_FAMILY: &str = "system";
+const MEMO_CONTENT_PREFIX: &str = "FLORAL_MEMO_V1\n";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -540,7 +541,7 @@ fn move_or_copy_dir(from: &Path, to: &Path) -> Result<(), AppError> {
 fn copy_dir_recursive(from: &Path, to: &Path) -> Result<(), AppError> {
     // 拒绝把目录复制进自身子目录：否则递归无限展开、磁盘耗尽。
     // migrate_data_to 上层已用 canonical_for_compare 拦截，这里做底层兜底，
-    // 与 updater::helper 的同名实现保持一致的自递归防护
+    // 防止目标目录递归包含当前数据目录。
     if to.starts_with(from) && to != from {
         return Err(AppError::new("unsafePath", "目标目录不能位于源目录内部"));
     }
@@ -929,8 +930,77 @@ impl NoteStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(path, note.content)?;
+        let export_content = if let Some(markdown) = memo_to_markdown(&note.content) {
+            let title = note.title.replace(['\r', '\n'], " ");
+            let title = title.trim();
+            if title.is_empty() {
+                markdown
+            } else if markdown.trim().is_empty() {
+                format!("# {title}")
+            } else {
+                format!("# {title}\n\n{markdown}")
+            }
+        } else {
+            note.content
+        };
+        let export_content = self.copy_export_images(id, path, &export_content)?;
+        fs::write(path, export_content)?;
         Ok(())
+    }
+
+    fn copy_export_images(
+        &self,
+        note_id: &str,
+        markdown_path: &Path,
+        markdown: &str,
+    ) -> Result<String, AppError> {
+        let marker = format!("images/{note_id}/");
+        if !markdown.contains(&marker) {
+            return Ok(markdown.to_string());
+        }
+
+        let asset_stem = markdown_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("note");
+        let asset_dir_name = format!("{asset_stem}_assets");
+        let export_dir = markdown_path.parent().unwrap_or_else(|| Path::new("."));
+        let asset_dir = export_dir.join(&asset_dir_name);
+        let source_dir = self.images_dir(note_id);
+        let mut output = String::with_capacity(markdown.len());
+        let mut remaining = markdown;
+
+        while let Some(index) = remaining.find(&marker) {
+            output.push_str(&remaining[..index]);
+            let after_marker = &remaining[index + marker.len()..];
+            let file_name_len = after_marker
+                .find(|ch: char| matches!(ch, ')' | '>' | '\r' | '\n' | ' ' | '\t'))
+                .unwrap_or(after_marker.len());
+            let file_name = &after_marker[..file_name_len];
+            let is_image_target = output.ends_with("](");
+            let is_safe_file_name = !file_name.is_empty()
+                && Path::new(file_name).components().count() == 1
+                && !matches!(
+                    Path::new(file_name).components().next(),
+                    Some(Component::ParentDir | Component::CurDir)
+                );
+            let source = source_dir.join(file_name);
+
+            if is_image_target && is_safe_file_name && source.is_file() {
+                fs::create_dir_all(&asset_dir)?;
+                fs::copy(&source, asset_dir.join(file_name))?;
+                output.push_str(&format!("<{asset_dir_name}/{file_name}>"));
+            } else {
+                output.push_str(&marker);
+                output.push_str(file_name);
+            }
+
+            remaining = &after_marker[file_name_len..];
+        }
+
+        output.push_str(remaining);
+        Ok(output)
     }
 
     pub fn list_categories(&self) -> Result<Vec<String>, AppError> {
@@ -1557,17 +1627,169 @@ fn safe_file_stem(title: &str) -> String {
 }
 
 fn count_words(content: &str) -> usize {
-    content.chars().filter(|ch| !ch.is_whitespace()).count()
+    let visible = memo_plain_text(content);
+    visible
+        .as_deref()
+        .unwrap_or(content)
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .count()
 }
 
 fn preview(content: &str) -> String {
-    content
+    let visible = memo_plain_text(content);
+    visible
+        .as_deref()
+        .unwrap_or(content)
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .chars()
         .take(80)
         .collect()
+}
+
+fn memo_plain_text(content: &str) -> Option<String> {
+    let json = content.strip_prefix(MEMO_CONTENT_PREFIX)?;
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    if value.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+        return None;
+    }
+    let blocks = value.get("blocks")?.as_array()?;
+    let lines = blocks
+        .iter()
+        .filter_map(|block| {
+            let kind = block.get("type")?.as_str()?;
+            match kind {
+                "text" | "todo" => block.get("text")?.as_str().map(str::to_string),
+                "image" => block
+                    .get("alt")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|alt| !alt.trim().is_empty())
+                    .map(|alt| format!("[{alt}]")),
+                _ => None,
+            }
+        })
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    Some(lines.join("\n"))
+}
+
+fn memo_to_markdown(content: &str) -> Option<String> {
+    let json = content.strip_prefix(MEMO_CONTENT_PREFIX)?;
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    if value.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+        return None;
+    }
+    let blocks = value.get("blocks")?.as_array()?;
+    let markdown = blocks
+        .iter()
+        .filter_map(|block| {
+            let kind = block.get("type")?.as_str()?;
+            match kind {
+                "text" => {
+                    let text = block.get("text")?.as_str()?;
+                    if text.trim().is_empty() {
+                        return None;
+                    }
+                    let text = memo_markdown_link(block, &memo_markdown_format(block, text));
+                    if block.get("style").and_then(serde_json::Value::as_str) == Some("heading") {
+                        Some(format!("## {text}"))
+                    } else {
+                        Some(text)
+                    }
+                }
+                "todo" => {
+                    let text = block.get("text")?.as_str()?;
+                    let text = memo_markdown_link(block, &memo_markdown_format(block, text));
+                    let marker = if block
+                        .get("checked")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        "x"
+                    } else {
+                        " "
+                    };
+                    Some(format!("- [{marker}] {text}"))
+                }
+                "image" => {
+                    let src = block.get("src")?.as_str()?;
+                    let alt = block
+                        .get("alt")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                        .replace('\\', "\\\\")
+                        .replace(']', "\\]");
+                    Some(format!("![{alt}]({src})"))
+                }
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Some(markdown)
+}
+
+fn memo_markdown_format(block: &serde_json::Value, text: &str) -> String {
+    let format = block.get("format");
+    let bold = format
+        .and_then(|value| value.get("bold"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let italic = format
+        .and_then(|value| value.get("italic"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let underline = format
+        .and_then(|value| value.get("underline"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
+    text.split('\n')
+        .map(|line| {
+            if line.is_empty() {
+                return String::new();
+            }
+            let mut formatted = match (bold, italic) {
+                (true, true) => format!("***{line}***"),
+                (true, false) => format!("**{line}**"),
+                (false, true) => format!("*{line}*"),
+                (false, false) => line.to_string(),
+            };
+            if underline {
+                formatted = format!("<u>{formatted}</u>");
+            }
+            formatted
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn memo_markdown_link(block: &serde_json::Value, text: &str) -> String {
+    let Some(url) = block
+        .get("link")
+        .and_then(serde_json::Value::as_str)
+        .filter(|url| {
+            ["http://", "https://", "mailto:", "tel:"]
+                .iter()
+                .any(|prefix| url.to_ascii_lowercase().starts_with(prefix))
+        })
+    else {
+        return text.to_string();
+    };
+    let escaped_url = url.replace('<', "%3C").replace('>', "%3E");
+
+    text.split('\n')
+        .map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("[{line}](<{escaped_url}>)")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn id_from_file_name(file_name: &str) -> Option<String> {
@@ -1655,7 +1877,7 @@ fn default_note_surface_auto_save() -> bool {
 }
 
 fn default_tile_color() -> String {
-    "#f6f3ec".into()
+    "#fdf6e3".into()
 }
 
 fn default_tile_color_mode() -> String {
@@ -1768,6 +1990,28 @@ mod tests {
     }
 
     #[test]
+    fn extracts_visible_text_and_markdown_from_structured_memos() {
+        let content = concat!(
+            "FLORAL_MEMO_V1\n",
+            r#"{"version":1,"blocks":["#,
+            r#"{"id":"heading","type":"text","text":"周末","style":"heading","format":{"bold":true},"link":"https://example.com/weekend"},"#,
+            r#"{"id":"todo","type":"todo","text":"买花","checked":true,"format":{"italic":true,"underline":true}},"#,
+            r#"{"id":"image","type":"image","src":"images/note/photo.png","alt":"花束"}"#,
+            "]}"
+        );
+
+        assert_eq!(
+            memo_plain_text(content).as_deref(),
+            Some("周末\n买花\n[花束]")
+        );
+        assert_eq!(preview(content), "周末 买花 [花束]");
+        assert_eq!(
+            memo_to_markdown(content).as_deref(),
+            Some("## [**周末**](<https://example.com/weekend>)\n\n- [x] <u>*买花*</u>\n\n![花束](images/note/photo.png)")
+        );
+    }
+
+    #[test]
     fn creates_updates_reads_and_deletes_markdown_notes() {
         let store = test_store("crud");
 
@@ -1867,7 +2111,7 @@ mod tests {
         assert_eq!(default_config.global_shortcut, "Ctrl+Space");
         assert!(default_config.note_auto_save);
         assert!(default_config.note_surface_auto_save);
-        assert_eq!(default_config.tile_color, "#f6f3ec");
+        assert_eq!(default_config.tile_color, "#fdf6e3");
         assert_eq!(default_config.tile_color_mode, "system");
         assert_eq!(default_config.theme, "system");
         assert_eq!(default_config.locale, "zh-CN");
@@ -1966,7 +2210,7 @@ mod tests {
 
         assert!(loaded.note_auto_save);
         assert!(loaded.note_surface_auto_save);
-        assert_eq!(loaded.tile_color, "#f6f3ec");
+        assert_eq!(loaded.tile_color, "#fdf6e3");
         assert_eq!(loaded.tile_color_mode, "system");
         assert_eq!(loaded.theme, "system");
         assert_eq!(loaded.locale, "zh-CN");
@@ -2431,6 +2675,81 @@ mod tests {
         assert_eq!(
             fs::read_to_string(export_path).expect("read exported markdown"),
             content
+        );
+    }
+
+    #[test]
+    fn exports_structured_memo_with_title_formatting_and_portable_images() {
+        let root = test_root("export-structured-markdown");
+        let store_path = root.join("store");
+        let store = NoteStore::new(store_path.clone(), store_path);
+        let note = store
+            .create_note(SaveNoteRequest {
+                title: "周末计划".into(),
+                content: String::new(),
+                category: String::new(),
+            })
+            .expect("create note");
+        let image_ref = store
+            .save_image(&note.id, b"image bytes", "png")
+            .expect("save image");
+        let content = format!(
+            "{MEMO_CONTENT_PREFIX}{}",
+            serde_json::json!({
+                "version": 1,
+                "blocks": [
+                    {
+                        "id": "text",
+                        "type": "text",
+                        "text": "带格式正文",
+                        "style": "body",
+                        "format": { "bold": true, "italic": true },
+                        "link": "https://example.com/details"
+                    },
+                    {
+                        "id": "todo",
+                        "type": "todo",
+                        "text": "完成导出",
+                        "checked": false
+                    },
+                    {
+                        "id": "image",
+                        "type": "image",
+                        "src": image_ref.clone(),
+                        "alt": "示例图片"
+                    }
+                ]
+            })
+        );
+        store
+            .update_note(
+                &note.id,
+                SaveNoteRequest {
+                    title: note.title.clone(),
+                    content,
+                    category: String::new(),
+                },
+            )
+            .expect("update note");
+
+        let export_path = root.join("exports").join("周末计划.md");
+        store
+            .export_markdown_file(&note.id, &export_path)
+            .expect("export structured memo");
+        let exported = fs::read_to_string(&export_path).expect("read exported markdown");
+        let exported_image = export_path
+            .parent()
+            .expect("export parent")
+            .join("周末计划_assets")
+            .join(Path::new(&image_ref).file_name().expect("image file name"));
+
+        assert!(exported.starts_with(
+            "# 周末计划\n\n[***带格式正文***](<https://example.com/details>)\n\n- [ ] 完成导出"
+        ));
+        assert!(exported.contains("![示例图片](<周末计划_assets/"));
+        assert_eq!(
+            fs::read(exported_image).expect("read exported image"),
+            b"image bytes"
         );
     }
 }

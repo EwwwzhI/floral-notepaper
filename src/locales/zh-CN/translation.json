@@ -13,16 +13,16 @@
   },
   "common": {
     "back": "返回",
-    "blankNote": "空白笔记",
+    "blankNote": "空白便签",
     "cancel": "取消",
     "clear": "清空",
     "default": "默认",
     "delete": "删除",
     "externalFileCount": "{{count}} 个外部文件",
-    "noteCount": "{{count}} 篇笔记",
+    "noteCount": "{{count}} 张便签",
     "operationFailed": "操作失败",
     "save": "保存",
-    "untitledNote": "无标题笔记",
+    "untitledNote": "无标题便签",
     "untitledFile": "未命名文件",
     "wordCount": "{{count}} 字",
     "wordCountUnit": "字"
@@ -33,12 +33,6 @@
       "cut": "剪切",
       "paste": "粘贴",
       "selectAll": "全选"
-    },
-    "tile": {
-      "close": "取消钉屏",
-      "copy": "复制",
-      "save": "保存",
-      "switchToPad": "转为小窗"
     }
   },
   "errors": {
@@ -51,7 +45,7 @@
     "imagePasteFailed": "图片粘贴失败",
     "imageTooLarge": "图片文件过大（上限 20 MB）",
     "noPool": "便签窗口池尚未初始化",
-    "noteNotFound": "找不到该笔记",
+    "noteNotFound": "找不到该便签",
     "unsupportedFile": "只支持导入 .md 文件",
     "unsupportedImageFormat": "不支持的图片格式",
     "unsupportedShortcut": "{{field}} 配置无效",
@@ -88,9 +82,12 @@
       "confirmClear": "确认清空？",
       "clearContent": "清空正文",
       "contentPlaceholder": "开始写作……",
-      "emptyHint": "选择或新建一篇笔记",
+      "emptyHint": "选择或新建一张便签",
+      "memoPlaceholder": "记录此刻要记住的事……",
+      "memoTitlePlaceholder": "便签标题（可选）",
       "pinToTile": "钉为磁贴",
       "previewLabel": "预览",
+      "quickMemo": "快捷便签",
       "undo": "撤销（Ctrl+Z）",
       "undoLabel": "撤销",
       "redo": "重做（Ctrl+Y）",
@@ -113,14 +110,14 @@
       "todoItem": "待办事项"
     },
     "search": {
-      "empty": "还没有笔记",
-      "noResults": "没有匹配的笔记"
+      "empty": "还没有便签",
+      "noResults": "没有匹配的便签"
     },
     "sidebar": {
       "clearSearch": "清空搜索",
       "importMarkdown": "导入 Markdown",
-      "newNote": "新建笔记",
-      "searchPlaceholder": "搜索笔记…"
+      "newNote": "新建便签",
+      "searchPlaceholder": "搜索便签…"
     },
     "images": {
       "cleanUnused": "清理未使用图片",
@@ -128,13 +125,16 @@
       "cleanedNone": "没有需要清理的图片",
       "import": "导入图片",
       "importShort": "图片",
-      "managedOnly": "图片导入仅支持应用内笔记"
+      "managedOnly": "图片导入仅支持应用内便签"
     },
     "statusBar": {
       "byteSize": "{{size}} KB",
       "encoding": "UTF-8",
       "format": "Markdown + LaTeX",
       "lineNumber": "Ln {{count}}",
+      "blockCount": "{{count}} 个内容块",
+      "localMemo": "本地便签",
+      "memoFormat": "快捷便签",
       "saveState": {
         "dirty": "未保存",
         "error": "保存失败",
@@ -168,30 +168,45 @@
       "settings": "设置"
     }
   },
+  "memo": {
+    "addImage": "图片",
+    "addTodo": "待办",
+    "bold": "加粗",
+    "deleteImage": "删除图片",
+    "deleteText": "删除文本块",
+    "deleteTodo": "删除待办",
+    "directEditing": "所见即所得",
+    "imageUnavailable": "图片暂不可用",
+    "italic": "斜体",
+    "markComplete": "标记为完成",
+    "markIncomplete": "标记为未完成",
+    "openLink": "打开链接",
+    "toggleTodo": "切换待办",
+    "toolbarLabel": "便签快捷工具",
+    "todoPlaceholder": "待办事项",
+    "underline": "下划线"
+  },
   "noteMenu": {
-    "delete": "删除笔记",
+    "delete": "删除便签",
     "export": "导出 Markdown",
+    "exported": "Markdown 已导出",
     "moveToCategory": "移动到分类…"
   },
   "notepad": {
     "button": {
       "clear": "清空"
     },
-    "emptyState": "还没有可打开的笔记",
+    "emptyState": "还没有可打开的便签",
     "search": {
       "clear": "清空搜索",
-      "noResults": "没有匹配的笔记",
-      "placeholder": "搜索笔记…"
-    },
-    "error": {
-      "copyUnsupported": "当前环境不支持复制"
+      "noResults": "没有匹配的便签",
+      "placeholder": "搜索便签…"
     },
     "placeholder": {
       "content": "写点什么……",
       "title": "标题（可选）"
     },
     "status": {
-      "copied": "已复制",
       "empty": "空",
       "opened": "已打开",
       "saveFailed": "保存失败",
@@ -217,15 +232,19 @@
     },
     "tooltip": {
       "close": "关闭",
+      "disableAlwaysOnTop": "取消置顶",
+      "edit": "编辑便签",
+      "enableAlwaysOnTop": "置顶窗口",
       "openInEditor": "在编辑器中打开",
-      "pinToTile": "转为磁贴"
+      "pinToTile": "转为磁贴",
+      "unpin": "取消钉屏"
     }
   },
   "settings": {
     "autoSave": {
       "externalFile": "外部文件自动保存",
-      "note": "自动保存笔记",
-      "surface": "小窗笔记自动保存"
+      "note": "自动保存便签",
+      "surface": "便签小窗自动保存"
     },
     "autostart": "开机自启",
     "closeTitle": "关闭设置",
@@ -254,7 +273,7 @@
     },
     "dataDir": "数据目录",
     "openAtCursor": "快捷键打开时跟随鼠标位置",
-    "quickNoteShortcut": "快捷记录快捷键",
+    "quickNoteShortcut": "快捷便签快捷键",
     "rememberSurfaceSize": "记住小窗尺寸",
     "tabIndentSize": "Tab 缩进宽度",
     "selectFolder": "选择文件夹",
@@ -273,7 +292,7 @@
         "system": "快捷键 {{shortcut}} 与系统快捷键冲突",
         "unknown": "检测完成，但释放临时快捷键失败"
       },
-      "forQuickNote": "用于打开快捷记录小窗",
+      "forQuickNote": "用于打开快捷便签窗口",
       "needsModifier": "快捷键需要包含 Ctrl、Option/Alt 或 Command/Meta",
       "notSet": "未设置",
       "pressHint": "按下快捷键；按 Delete 清空。"

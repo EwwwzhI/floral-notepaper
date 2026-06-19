@@ -1,5 +1,6 @@
 import { t, type TFunction } from "i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import type { Note, NoteMetadata, SaveNoteRequest } from "./types";
 
 interface SerializedAppError {
@@ -41,6 +42,31 @@ export function updateNote(id: string, request: SaveNoteRequest): Promise<Note> 
 
 export function deleteNote(id: string): Promise<void> {
   return invoke("notes_delete", { id });
+}
+
+export function markdownExportFileName(title: string): string {
+  const stem = Array.from(title.trim(), (character) => {
+    return character.charCodeAt(0) <= 0x1f || /[<>:"/\\|?*]/.test(character) ? "_" : character;
+  })
+    .join("")
+    .replace(/[\s_]+/g, "_")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 80);
+  return `${stem || "无标题便签"}.md`;
+}
+
+export async function chooseMarkdownExportPath(title: string): Promise<string | null> {
+  const path = await save({
+    title: "导出 Markdown",
+    defaultPath: markdownExportFileName(title),
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  if (typeof path !== "string") return null;
+  return path.toLowerCase().endsWith(".md") ? path : `${path}.md`;
+}
+
+export function exportNoteMarkdown(id: string, path: string): Promise<void> {
+  return invoke("notes_export_markdown", { id, path });
 }
 
 export function moveNoteCategory(id: string, category: string): Promise<NoteMetadata> {
@@ -156,7 +182,7 @@ function getLocalizedAppErrorMessage(
         defaultValue: "分类「{{category}}」已存在",
       });
     case "noteNotFound":
-      return translate("errors.noteNotFound", { defaultValue: "找不到该笔记" });
+      return translate("errors.noteNotFound", { defaultValue: "找不到该便签" });
     case "duplicateShortcut":
       return translate("errors.duplicateShortcut", {
         defaultValue: "显示/隐藏窗口快捷键不能与呼出小窗快捷键重复",

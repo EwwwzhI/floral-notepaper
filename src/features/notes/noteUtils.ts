@@ -1,4 +1,5 @@
 import { t, type TFunction } from "i18next";
+import { isMemoContent, memoPlainText } from "../memo/document";
 import type { Note, NoteMetadata } from "./types";
 
 export function getDisplayTitle(
@@ -11,16 +12,18 @@ export function getDisplayTitle(
   const preview = note.preview.trim();
   if (preview) return preview.slice(0, 20);
 
-  return translate("common.untitledNote", { defaultValue: "无标题笔记" });
+  return translate("common.untitledNote", { defaultValue: "无标题便签" });
 }
 
 export function buildPreview(content: string): string {
-  return content.split(/\s+/).filter(Boolean).join(" ").slice(0, 80);
+  const visibleContent = isMemoContent(content) ? memoPlainText(content) : content;
+  return visibleContent.split(/\s+/).filter(Boolean).join(" ").slice(0, 80);
 }
 
 export function countNoteChars(content: string): number {
+  const visibleContent = isMemoContent(content) ? memoPlainText(content) : content;
   let count = 0;
-  for (const ch of content) {
+  for (const ch of visibleContent) {
     if (!/\s/.test(ch)) count++;
   }
   return count;

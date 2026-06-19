@@ -6,6 +6,7 @@ import {
   getDisplayTitle,
   groupNotesByCategory,
 } from "./noteUtils";
+import { serializeMemoDocument } from "../memo/document";
 import type { NoteMetadata } from "./types";
 
 const notes: NoteMetadata[] = [
@@ -32,10 +33,23 @@ const notes: NoteMetadata[] = [
 ];
 
 describe("note utilities", () => {
+  it("counts and previews visible structured memo content instead of storage JSON", () => {
+    const content = serializeMemoDocument({
+      version: 1,
+      blocks: [
+        { id: "text", type: "text", text: "周末", style: "heading" },
+        { id: "todo", type: "todo", text: "买花", checked: false },
+      ],
+    });
+
+    expect(buildPreview(content)).toBe("周末 买花");
+    expect(countNoteChars(content)).toBe(4);
+  });
+
   it("uses title, preview, then untitled fallback for display title", () => {
     expect(getDisplayTitle(notes[0])).toBe("读书笔记");
     expect(getDisplayTitle(notes[1])).toBe("周末采购清单");
-    expect(getDisplayTitle({ ...notes[1], preview: "" })).toBe("无标题笔记");
+    expect(getDisplayTitle({ ...notes[1], preview: "" })).toBe("无标题便签");
   });
 
   it("builds compact previews and counts non-whitespace characters", () => {

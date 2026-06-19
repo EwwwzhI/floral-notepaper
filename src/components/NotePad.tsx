@@ -12,8 +12,6 @@ import {
   type PendingImage,
 } from "../features/images/pendingImages";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
-import { reportInstallPreparation } from "../features/update/api";
-import type { UpdateInstallPrepareRequest } from "../features/update/types";
 import { showToast } from "./Toast";
 import type { Note, NoteMetadata } from "../features/notes/types";
 import { countNoteChars, metadataFromNote } from "../features/notes/noteUtils";
@@ -38,11 +36,6 @@ import {
   resolveTileColor,
 } from "../features/settings/tileColor";
 import type { AppConfig, TileColorMode } from "../features/settings/types";
-import { shouldSaveBeforeSwitchingToTile } from "../features/windows/noteSurfaceSavePolicy";
-import {
-  NOTE_SURFACE_ACTION_EVENT,
-  surfaceActionFromEvent,
-} from "../features/windows/surfaceActions";
 import {
   NOTE_SURFACE_MODE_EVENT,
   getSurfaceTargetBounds,
@@ -53,14 +46,19 @@ import {
   emitTileWindowUnpinned,
   tileSurfaceModeUnpinNoteId,
 } from "../features/windows/tileWindowEvents";
+import {
+  createEmptyMemoContent,
+  memoHasContent,
+  parseMemoContent,
+  serializeMemoDocument,
+} from "../features/memo/document";
+import { MemoEditor, type MemoEditorHandle } from "./MemoEditor";
 import { NotepadOpenPanel } from "./NotepadOpenPanel";
 import { Tile } from "./Tile";
-import { ScratchMarkdownEditor, type ScratchMarkdownEditorHandle } from "./ScratchMarkdownEditor";
-import type { FormatAction } from "../features/markdown/editorCommands";
 
 type OpenMode = "new" | "open";
 type PadDocumentKind = "scratch" | "existing";
-type NotePadStatus = "empty" | "opened" | "saved" | "dirty" | "saveFailed" | "copied";
+type NotePadStatus = "empty" | "opened" | "saved" | "dirty" | "saveFailed";
 
 interface NotePadProps {
   initialNoteId?: string;
@@ -132,24 +130,22 @@ export function NotePad({
   );
   const [, setScratchSourceNoteId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
+  const [content, setContent] = useState(() => createEmptyMemoContent());
   const [status, setStatus] = useState<NotePadStatus>("empty");
-  const [noteSurfaceAutoSave, setNoteSurfaceAutoSave] = useState(initialAutoSave);
+  const [noteSurfaceAutoSave] = useState(initialAutoSave);
   const [tileColorRaw, setTileColorRaw] = useState(normalizeTileColor(initialTileColor));
   const [tileColorMode, setTileColorMode] = useState<TileColorMode>("system");
   const [surfaceFontSize, setSurfaceFontSize] = useState(14);
-  const [tileRenderMarkdown, setTileRenderMarkdown] = useState(false);
   const [noteFontFamily, setNoteFontFamily] = useState("var(--font-body)");
   const [pendingImages, setPendingImages] = useState<Record<string, PendingImage>>({});
   const pendingImagesRef = useRef<Record<string, PendingImage>>({});
   const [tileColor, setTileColor] = useState(() =>
     resolveTileColor("system", normalizeTileColor(initialTileColor)),
   );
+  const [surfaceAlwaysOnTop, setSurfaceAlwaysOnTop] = useState(initialSurfaceMode === "tile");
   const [isExiting, setIsExiting] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
-  const scratchEditorRef = useRef<ScratchMarkdownEditorHandle | null>(null);
-  const windowLabelRef = useRef("");
-  const statusRef = useRef<NotePadStatus>("empty");
+  const memoEditorRef = useRef<MemoEditorHandle | null>(null);
   const contentValueRef = useRef(content);
   contentValueRef.current = content;
   const titleValueRef = useRef(title);
@@ -159,6 +155,7 @@ export function NotePad({
       new URLSearchParams(window.location.search).get("standby") === "1",
   );
   const hasEnteredOnce = useRef(false);
+  const hasEnteredTile = useRef(initialSurfaceMode === "tile");
   pendingImagesRef.current = pendingImages;
   const pendingImageUrls = useMemo(() => pendingImageObjectUrls(pendingImages), [pendingImages]);
   const statusLabel = useMemo<Record<NotePadStatus, string>>(
@@ -168,7 +165,6 @@ export function NotePad({
       saved: t("notepad.status.saved", { defaultValue: "已保存" }),
       dirty: t("notepad.status.unsaved", { defaultValue: "未保存" }),
       saveFailed: t("notepad.status.saveFailed", { defaultValue: "保存失败" }),
-      copied: t("notepad.status.copied", { defaultValue: "已复制" }),
     }),
     [t],
   );
@@ -180,63 +176,6 @@ export function NotePad({
     }),
     [t],
   );
-  const formatButtons = useMemo<
-    Array<{ label: string; title: string; action: FormatAction; style?: string }>
-  >(
-    () => [
-      {
-        label: "B",
-        title: t("notepad.toolbar.bold", { defaultValue: "粗体" }),
-        action: "bold",
-        style: "font-bold",
-      },
-      {
-        label: "I",
-        title: t("notepad.toolbar.italic", { defaultValue: "斜体" }),
-        action: "italic",
-        style: "italic",
-      },
-      {
-        label: "H1",
-        title: t("notepad.toolbar.heading1", { defaultValue: "一级标题" }),
-        action: "heading1",
-        style: "font-mono text-[9px]",
-      },
-      {
-        label: "H2",
-        title: t("notepad.toolbar.heading2", { defaultValue: "二级标题" }),
-        action: "heading2",
-        style: "font-mono text-[9px]",
-      },
-      {
-        label: "H3",
-        title: t("notepad.toolbar.heading3", { defaultValue: "三级标题" }),
-        action: "heading3",
-        style: "font-mono text-[9px]",
-      },
-      {
-        label: "1.",
-        title: t("notepad.toolbar.ol", { defaultValue: "有序列表" }),
-        action: "ol",
-        style: "font-mono text-[9px]",
-      },
-      {
-        label: "☐",
-        title: t("notepad.toolbar.todo", { defaultValue: "待办" }),
-        action: "todo",
-        style: "text-[12px]",
-      },
-      {
-        label: "☑",
-        title: t("notepad.toolbar.todoToggle", { defaultValue: "切换完成" }),
-        action: "todoToggle",
-        style: "text-[12px]",
-      },
-    ],
-    [t],
-  );
-  statusRef.current = status;
-
   const refreshNotes = useCallback(async () => {
     const loadedNotes = await listNotes();
     setNotes(loadedNotes);
@@ -248,7 +187,7 @@ export function NotePad({
     setScratchSourceNoteId(kind === "scratch" ? note.id : null);
     setDocumentKind(kind);
     setTitle(note.title);
-    setContent(note.content);
+    setContent(serializeMemoDocument(parseMemoContent(note.content)));
     revokePendingImages(Object.values(pendingImagesRef.current));
     pendingImagesRef.current = {};
     setPendingImages({});
@@ -263,9 +202,7 @@ export function NotePad({
       try {
         const [loadedConfig] = await Promise.all([getConfig(), refreshNotes()]);
         if (!cancelled) {
-          setNoteSurfaceAutoSave(loadedConfig.noteSurfaceAutoSave);
           setSurfaceFontSize(loadedConfig.surfaceFontSize ?? 14);
-          setTileRenderMarkdown(loadedConfig.tileRenderMarkdown ?? false);
           setTileColorRaw(normalizeTileColor(loadedConfig.tileColor));
           setTileColorMode(loadedConfig.tileColorMode ?? "system");
           setTileColor(
@@ -307,7 +244,7 @@ export function NotePad({
         if (!cancelled) {
           hasEnteredOnce.current = true;
           void showCurrentWindow()
-            .then(() => scratchEditorRef.current?.focus())
+            .then(() => memoEditorRef.current?.focus())
             .catch(() => undefined);
         }
       });
@@ -325,8 +262,6 @@ export function NotePad({
       setTileColorRaw(normalizeTileColor(raw));
       setTileColor(resolveTileColor(mode, raw));
       if (event.payload.surfaceFontSize != null) setSurfaceFontSize(event.payload.surfaceFontSize);
-      if (event.payload.tileRenderMarkdown != null)
-        setTileRenderMarkdown(event.payload.tileRenderMarkdown);
       const fontFamily = resolveNoteFontFamily(event.payload.noteFontFamily);
       setNoteFontFamily(fontFamily);
       applyAppFont(event.payload.noteFontFamily);
@@ -352,7 +287,6 @@ export function NotePad({
     let myLabel = "";
     try {
       myLabel = getCurrentWindow().label;
-      windowLabelRef.current = myLabel;
     } catch {
       // not in Tauri environment (tests)
     }
@@ -366,14 +300,20 @@ export function NotePad({
       setScratchSourceNoteId(null);
       setDocumentKind("scratch");
       setTitle("");
-      setContent("");
+      setContent(createEmptyMemoContent());
+      revokePendingImages(Object.values(pendingImagesRef.current));
+      pendingImagesRef.current = {};
+      setPendingImages({});
       setMode("new");
       setStatus("empty");
       setIsExiting(false);
       setSurfaceMode("pad");
+      setSurfaceAlwaysOnTop(false);
+      hasEnteredTile.current = false;
+      void setCurrentWindowAlwaysOnTop(false).catch(() => undefined);
       void refreshNotes().catch(() => undefined);
       void showCurrentWindow()
-        .then(() => scratchEditorRef.current?.focus())
+        .then(() => memoEditorRef.current?.focus())
         .catch(() => undefined);
     });
     return () => {
@@ -382,11 +322,22 @@ export function NotePad({
   }, [refreshNotes]);
 
   const saveNote = useCallback(async () => {
+    const titleSnapshot = title;
+    const contentSnapshot = content;
     const existingCategory = notes.find((n) => n.id === editingNoteId)?.category ?? "";
     let note =
       editingNoteId && documentKind === "existing"
-        ? await updateNote(editingNoteId, { title, content, category: existingCategory })
-        : await createNote({ title, content, category: existingCategory });
+        ? await updateNote(editingNoteId, {
+            title: titleSnapshot,
+            content: contentSnapshot,
+            category: existingCategory,
+          })
+        : await createNote({
+            title: titleSnapshot,
+            content: contentSnapshot,
+            category: existingCategory,
+          });
+    let savedContent = contentSnapshot;
 
     const pendingIds = extractPendingImageIds(note.content);
     if (pendingIds.length > 0) {
@@ -400,13 +351,15 @@ export function NotePad({
       }
       if (Object.keys(replacements).length > 0) {
         const persistedContent = replacePendingImageRefs(note.content, replacements);
+        savedContent = persistedContent;
         note = await updateNote(note.id, {
-          title,
+          title: titleSnapshot,
           content: persistedContent,
           category: existingCategory,
         });
-        contentValueRef.current = persistedContent;
-        setContent(persistedContent);
+        const currentContent = replacePendingImageRefs(contentValueRef.current, replacements);
+        contentValueRef.current = currentContent;
+        setContent(currentContent);
         setPendingImages((current) => {
           const next = { ...current };
           for (const image of savedImages) delete next[image.tempId];
@@ -428,51 +381,14 @@ export function NotePad({
         : [metadata, ...current];
       return [...next].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     });
-    const contentChanged = contentValueRef.current !== content || titleValueRef.current !== title;
+    const contentChanged =
+      contentValueRef.current !== savedContent || titleValueRef.current !== titleSnapshot;
     setStatus(contentChanged ? "dirty" : "saved");
     return note;
   }, [content, documentKind, editingNoteId, title, notes]);
 
-  useEffect(() => {
-    const unlisten = listen<UpdateInstallPrepareRequest>("update://prepare-install", (event) => {
-      const respond = async () => {
-        const windowLabel = windowLabelRef.current || "notepad";
-        if (statusRef.current !== "dirty" || documentKind === "scratch") {
-          await reportInstallPreparation(event.payload.requestId, windowLabel, "ready");
-          return;
-        }
-
-        try {
-          await saveNote();
-          await reportInstallPreparation(event.payload.requestId, windowLabel, "ready");
-        } catch (error) {
-          setStatus("saveFailed");
-          showToast(getErrorMessage(error));
-          await reportInstallPreparation(
-            event.payload.requestId,
-            windowLabel,
-            "failed",
-            getErrorMessage(error),
-          );
-        }
-      };
-
-      void respond().catch(async (error) => {
-        await reportInstallPreparation(
-          event.payload.requestId,
-          windowLabelRef.current || "notepad",
-          "failed",
-          getErrorMessage(error),
-        ).catch(() => undefined);
-      });
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [saveNote, documentKind]);
-
   const hasDraftContent = useCallback(
-    () => Boolean(editingNoteId || title.trim() || content.trim()),
+    () => Boolean(editingNoteId || title.trim() || memoHasContent(content)),
     [content, editingNoteId, title],
   );
 
@@ -497,10 +413,6 @@ export function NotePad({
       }
 
       try {
-        if (nextMode === "tile") {
-          await setCurrentWindowAlwaysOnTop(true);
-        }
-
         const currentBounds = await getCurrentWindowBounds();
         await animateCurrentWindowBounds(getSurfaceTargetBounds(nextMode, currentBounds));
       } catch (error) {
@@ -523,10 +435,15 @@ export function NotePad({
     };
   }, [switchSurfaceMode]);
 
-  useEffect(() => {
-    if (surfaceMode !== "tile") return;
-    void setCurrentWindowAlwaysOnTop(true).catch(() => undefined);
-  }, [surfaceMode]);
+  const toggleSurfaceAlwaysOnTop = useCallback(async () => {
+    const nextValue = !surfaceAlwaysOnTop;
+    try {
+      await setCurrentWindowAlwaysOnTop(nextValue);
+      setSurfaceAlwaysOnTop(nextValue);
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  }, [surfaceAlwaysOnTop]);
 
   const handleSave = useCallback(async () => {
     try {
@@ -552,7 +469,7 @@ export function NotePad({
   const handleOpenNote = async (noteId: string) => {
     try {
       const note = await getNote(noteId);
-      applyNote(note, "scratch");
+      applyNote(note, "existing");
       await switchSurfaceMode("pad");
     } catch (error) {
       showToast(getErrorMessage(error));
@@ -561,8 +478,13 @@ export function NotePad({
 
   const handlePin = async () => {
     try {
-      if (shouldSaveBeforeSwitchingToTile(noteSurfaceAutoSave) && documentKind === "existing") {
+      if (hasDraftContent() && (documentKind === "scratch" || noteSurfaceAutoSave)) {
         await saveNote();
+      }
+      if (!hasEnteredTile.current) {
+        await setCurrentWindowAlwaysOnTop(true);
+        setSurfaceAlwaysOnTop(true);
+        hasEnteredTile.current = true;
       }
       await switchSurfaceMode("tile");
     } catch (error) {
@@ -578,48 +500,6 @@ export function NotePad({
       showToast(getErrorMessage(error));
     });
   }, [surfaceMode]);
-
-  const copyTileContent = useCallback(async () => {
-    try {
-      const clipboard = navigator.clipboard;
-      if (!clipboard?.writeText) {
-        throw new Error(t("notepad.error.copyUnsupported", { defaultValue: "当前环境不支持复制" }));
-      }
-      await clipboard.writeText(content);
-      setStatus("copied");
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  }, [content, t]);
-
-  useEffect(() => {
-    function handleSurfaceActionRequest(event: Event) {
-      const action = surfaceActionFromEvent(event);
-      if (!action) return;
-
-      if (action === "copy") {
-        void copyTileContent();
-        return;
-      }
-
-      if (action === "save") {
-        void handleSave();
-        return;
-      }
-
-      if (action === "close") {
-        void handleClose();
-        return;
-      }
-
-      void switchSurfaceMode("pad");
-    }
-
-    window.addEventListener(NOTE_SURFACE_ACTION_EVENT, handleSurfaceActionRequest);
-    return () => {
-      window.removeEventListener(NOTE_SURFACE_ACTION_EVENT, handleSurfaceActionRequest);
-    };
-  }, [copyTileContent, handleClose, handleSave, switchSurfaceMode]);
 
   useEffect(() => {
     if (
@@ -641,7 +521,7 @@ export function NotePad({
 
   const handleDrag = (event: MouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement;
-    if (target.closest("button,input,textarea")) return;
+    if (target.closest("button,input,textarea,a")) return;
     void startCurrentWindowDrag().catch(() => undefined);
   };
 
@@ -650,7 +530,7 @@ export function NotePad({
     setDocumentKind("scratch");
     setScratchSourceNoteId(null);
     setTitle("");
-    setContent("");
+    setContent(createEmptyMemoContent());
     revokePendingImages(Object.values(pendingImagesRef.current));
     pendingImagesRef.current = {};
     setPendingImages({});
@@ -663,7 +543,7 @@ export function NotePad({
   const enterClass = hasEnteredOnce.current ? "" : "animate-window-enter";
   const surfaceWrapperClassName = `w-full h-screen flex flex-col bg-transparent p-0 ${isExiting ? "animate-window-exit" : enterClass}`;
   const padSurfaceClassName =
-    "app-surface-frame relative noise-bg w-full h-full min-h-0 bg-cloud overflow-hidden flex flex-col flex-1 border border-paper-deep/70 shadow-[0_1px_10px_rgba(26,26,24,0.06)] transition-all duration-200 ease-out";
+    "app-surface-frame relative noise-bg w-full h-full min-h-0 bg-cloud overflow-hidden flex flex-col flex-1 border border-paper-deep/70 shadow-[0_1px_10px_var(--color-shadow)] transition-all duration-200 ease-out";
 
   return (
     <div className={surfaceWrapperClassName}>
@@ -673,37 +553,100 @@ export function NotePad({
           content={content}
           color={tileColor}
           fontSize={surfaceFontSize}
-          renderMarkdown={tileRenderMarkdown}
           imageBaseDir={imageBaseDir ?? undefined}
           noteFontFamily={noteFontFamily}
           pendingImages={pendingImageUrls}
+          onContentChange={(nextContent) => {
+            setContent(nextContent);
+            setStatus("dirty");
+          }}
           width="100%"
           className="h-full cursor-default"
           data-surface-mode={surfaceMode}
-          data-context-menu="tile"
           data-note-id={tileNoteId}
           onMouseDown={handleDrag}
         >
-          <button
-            type="button"
-            aria-label="取消钉屏"
-            title="取消钉屏"
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={() => void handleClose()}
-            className="absolute top-2 right-2 z-10 w-6 h-6 flex items-center justify-center rounded-full text-ink-ghost/70 hover:text-red-400 hover:bg-danger-bg/80 transition-colors cursor-pointer"
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
+          <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+            <button
+              type="button"
+              aria-pressed={surfaceAlwaysOnTop}
+              aria-label={
+                surfaceAlwaysOnTop
+                  ? t("notepad.tooltip.disableAlwaysOnTop", { defaultValue: "取消置顶" })
+                  : t("notepad.tooltip.enableAlwaysOnTop", { defaultValue: "置顶窗口" })
+              }
+              title={
+                surfaceAlwaysOnTop
+                  ? t("notepad.tooltip.disableAlwaysOnTop", { defaultValue: "取消置顶" })
+                  : t("notepad.tooltip.enableAlwaysOnTop", { defaultValue: "置顶窗口" })
+              }
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={() => void toggleSurfaceAlwaysOnTop()}
+              className={`w-6 h-6 flex items-center justify-center rounded-full transition-colors cursor-pointer ${
+                surfaceAlwaysOnTop
+                  ? "text-bamboo bg-bamboo-mist/80 hover:bg-bamboo-mist"
+                  : "text-ink-ghost/70 hover:text-bamboo hover:bg-bamboo-mist/80"
+              }`}
             >
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="4" y="8" width="13" height="11" rx="2" />
+                <path d="M8 5h11a2 2 0 0 1 2 2v8" />
+                <path d="M10.5 14 13 11.5 15.5 14" />
+                <path d="M13 11.5V17" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              aria-label={t("notepad.tooltip.edit", { defaultValue: "编辑便签" })}
+              title={t("notepad.tooltip.edit", { defaultValue: "编辑便签" })}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={() => void switchSurfaceMode("pad")}
+              className="w-6 h-6 flex items-center justify-center rounded-full text-ink-ghost/70 hover:text-bamboo hover:bg-bamboo-mist/80 transition-colors cursor-pointer"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              aria-label={t("notepad.tooltip.unpin", { defaultValue: "取消钉屏" })}
+              title={t("notepad.tooltip.unpin", { defaultValue: "取消钉屏" })}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={() => void handleClose()}
+              className="w-6 h-6 flex items-center justify-center rounded-full text-ink-ghost/70 hover:text-red-400 hover:bg-danger-bg/80 transition-colors cursor-pointer"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              >
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
           <SurfaceResizeHandles />
         </Tile>
       ) : (
@@ -743,6 +686,42 @@ export function NotePad({
               </div>
 
               <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  aria-pressed={surfaceAlwaysOnTop}
+                  aria-label={
+                    surfaceAlwaysOnTop
+                      ? t("notepad.tooltip.disableAlwaysOnTop", { defaultValue: "取消置顶" })
+                      : t("notepad.tooltip.enableAlwaysOnTop", { defaultValue: "置顶窗口" })
+                  }
+                  title={
+                    surfaceAlwaysOnTop
+                      ? t("notepad.tooltip.disableAlwaysOnTop", { defaultValue: "取消置顶" })
+                      : t("notepad.tooltip.enableAlwaysOnTop", { defaultValue: "置顶窗口" })
+                  }
+                  onClick={() => void toggleSurfaceAlwaysOnTop()}
+                  className={`group w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-200 cursor-pointer ${
+                    surfaceAlwaysOnTop
+                      ? "text-bamboo bg-bamboo-mist/70 hover:bg-bamboo-mist"
+                      : "text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50"
+                  }`}
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="4" y="8" width="13" height="11" rx="2" />
+                    <path d="M8 5h11a2 2 0 0 1 2 2v8" />
+                    <path d="M10.5 14 13 11.5 15.5 14" />
+                    <path d="M13 11.5V17" />
+                  </svg>
+                </button>
                 <button
                   onClick={() => void handlePin()}
                   className="group w-7 h-7 flex items-center justify-center rounded-lg transition-all duration-200 cursor-pointer text-ink-ghost hover:text-ink-faint hover:bg-paper-warm"
@@ -801,50 +780,16 @@ export function NotePad({
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === "ArrowDown") {
                       event.preventDefault();
-                      scratchEditorRef.current?.focus();
+                      memoEditorRef.current?.focus();
                     }
                   }}
                   placeholder={t("notepad.placeholder.title", { defaultValue: "标题（可选）" })}
-                  className="w-full font-display font-medium text-ink placeholder:text-ink-ghost/60 mb-2 tracking-wide shrink-0"
+                  className="w-full font-display font-semibold text-bamboo placeholder:text-ink-ghost/60 mb-1.5 tracking-wide shrink-0"
                   style={{ fontSize: `${surfaceFontSize}px` }}
                 />
 
-                <div className="flex flex-wrap items-center gap-1 mb-2 shrink-0">
-                  <button
-                    type="button"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => scratchEditorRef.current?.undo()}
-                    title={t("notepad.toolbar.undo", { defaultValue: "撤销" })}
-                    className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer"
-                  >
-                    ↶
-                  </button>
-                  <button
-                    type="button"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => scratchEditorRef.current?.redo()}
-                    title={t("notepad.toolbar.redo", { defaultValue: "重做" })}
-                    className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer"
-                  >
-                    ↷
-                  </button>
-                  <span className="h-4 w-px bg-paper-deep/60 mx-0.5" />
-                  {formatButtons.map((button) => (
-                    <button
-                      key={button.action}
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => scratchEditorRef.current?.format(button.action)}
-                      title={button.title}
-                      className={`w-6 h-6 flex items-center justify-center rounded text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer ${button.style ?? ""}`}
-                    >
-                      {button.label}
-                    </button>
-                  ))}
-                </div>
-
-                <ScratchMarkdownEditor
-                  ref={scratchEditorRef}
+                <MemoEditor
+                  ref={memoEditorRef}
                   value={content}
                   onChange={setContent}
                   onDirty={() => setStatus("dirty")}
@@ -863,8 +808,11 @@ export function NotePad({
                   imageBaseDir={imageBaseDir ?? undefined}
                   fontSize={surfaceFontSize}
                   fontFamily={noteFontFamily}
-                  placeholder={t("notepad.placeholder.content", { defaultValue: "写点什么……" })}
-                  t={t}
+                  placeholder={t("notepad.placeholder.content", {
+                    defaultValue: "随手记下文字，或在底部添加待办和图片……",
+                  })}
+                  compact
+                  onError={showToast}
                 />
 
                 <div className="flex items-center justify-between mt-auto pt-2 border-t border-paper-deep/30 shrink-0">

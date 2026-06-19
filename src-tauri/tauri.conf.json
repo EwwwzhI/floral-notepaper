@@ -53,20 +53,6 @@
         "installerHooks": "nsis-hooks.nsh"
       }
     },
-    "fileAssociations": [
-      {
-        "ext": ["md", "markdown"],
-        "name": "Markdown Document",
-        "description": "Markdown document file",
-        "role": "Editor"
-      },
-      {
-        "ext": ["txt"],
-        "name": "Text Document",
-        "description": "Plain text file",
-        "role": "Editor"
-      }
-    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -74,11 +60,5 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
-  },
-  "plugins": {
-    "cli": {
-      "description": "Floral Notepaper - lightweight local note app",
-      "args": []
-    }
   }
 }

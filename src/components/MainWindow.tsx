@@ -1,70 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AboutPanel } from "./AboutPanel";
-import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
-import { MarkdownPreview } from "../features/markdown/MarkdownPreview";
 import { showToast } from "./Toast";
-import {
-  blockIndexAtOffset,
-  measureBlockOffsets,
-  tagPreviewBlocks,
-} from "../features/markdown/scrollSync";
-import {
-  applyMarkdownFormat,
-  runEditorCommand,
-  type FormatAction,
-} from "../features/markdown/editorCommands";
 import {
   chooseDataDirectory,
   chooseNoteImage,
   getConfig,
   migrateDataDir,
-  normalizeViewMode,
   saveConfig,
 } from "../features/settings/api";
-import type { AppConfig, ViewMode } from "../features/settings/types";
+import type { AppConfig } from "../features/settings/types";
 import { normalizeTileColor } from "../features/settings/tileColor";
-import { getUpdateStatus, reportInstallPreparation } from "../features/update/api";
-import {
-  ABOUT_UPDATE_LABEL_DURATION_MS,
-  applyAboutUpdateStatus,
-  createAboutUpdateReminderState,
-  dismissAboutUpdateReminderText,
-  type AboutUpdateReminderState,
-} from "../features/update/presentation";
-import type {
-  UpdateErrorPayload,
-  UpdateInstallPrepareRequest,
-  UpdateState,
-} from "../features/update/types";
 import { BackgroundLayer } from "./BackgroundLayer";
+import { MemoEditor, type MemoEditorHandle } from "./MemoEditor";
 import { SettingsPanel } from "./SettingsPanel";
-import { SlidingButtonGroup } from "./SlidingButtonGroup";
 import {
   createNote,
   createCategory,
   deleteCategory,
   deleteNote,
+  chooseMarkdownExportPath,
+  exportNoteMarkdown,
   getErrorMessage,
-  getFileModifiedTime,
   getNote,
   listCategories,
   listNotes,
   moveNoteCategory,
-  readExternalFile,
   renameCategory,
-  saveExternalFile,
   updateNote,
 } from "../features/notes/api";
 import { cleanUnusedImages, readExternalImage, saveImage } from "../features/images/api";
-import { useImagePaste, insertTextAtCursor } from "../features/images/useImagePaste";
 import {
   createPendingImage,
   extractPendingImageIds,
-  pendingImageMarkdown,
   pendingImageObjectUrls,
   replacePendingImageRefs,
   revokePendingImages,
@@ -72,7 +43,7 @@ import {
 } from "../features/images/pendingImages";
 import { applyAppFont, resolveNoteFontFamily } from "../features/settings/fonts";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
-import type { ExternalFile, Note, NoteMetadata } from "../features/notes/types";
+import type { Note, NoteMetadata } from "../features/notes/types";
 import {
   countNoteChars,
   filterNotes,
@@ -82,12 +53,22 @@ import {
   groupNotesByCategory,
   metadataFromNote,
 } from "../features/notes/noteUtils";
+import {
+  appendMemoBlocks,
+  createEmptyMemoContent,
+  createMemoBlockId,
+  memoBlockCount,
+  memoHasContent,
+  parseMemoContent,
+  serializeMemoDocument,
+  type MemoImageBlock,
+} from "../features/memo/document";
 import type { CategoryGroup } from "../features/notes/noteUtils";
 import {
   getNoteContextMenuItems,
   type NoteContextMenuAction,
 } from "../features/notes/noteContextMenu";
-import { openNotepadWindow, takeStartupFile, toggleTileWindow } from "../features/windows/api";
+import { openNotepadWindow, toggleTileWindow } from "../features/windows/api";
 import {
   closeCurrentWindow,
   minimizeCurrentWindow,
@@ -155,12 +136,8 @@ export function MainWindow({
 }: MainWindowProps = {}) {
   const { t } = useTranslation();
   const [notes, setNotes] = useState<NoteMetadata[]>([]);
-  const [externalFiles, setExternalFiles] = useState<ExternalFile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>(
-    normalizeViewMode(initialConfig?.defaultViewMode ?? "split"),
-  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [content, setContent] = useState("");
   const [title, setTitle] = useState("");
@@ -176,9 +153,6 @@ export function MainWindow({
   );
   const [sidePanelContentVisible, setSidePanelContentVisible] = useState(
     Boolean(initialSettingsOpen && initialConfig),
-  );
-  const [aboutUpdateReminder, setAboutUpdateReminder] = useState<AboutUpdateReminderState>(() =>
-    createAboutUpdateReminderState(null),
   );
   const [settingsConfig, setSettingsConfig] = useState<AppConfig | null>(initialConfig ?? null);
   const [savedDataDir, setSavedDataDir] = useState<string | null>(initialConfig?.dataDir ?? null);
@@ -203,25 +177,11 @@ export function MainWindow({
   );
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [splitRatio, setSplitRatio] = useState(0.5);
-  const [isResizingSplit, setIsResizingSplit] = useState(false);
-  const splitContainerRef = useRef<HTMLDivElement>(null);
   const [categoryMenu, setCategoryMenu] = useState<CategoryMenuState | null>(null);
   const [categoryMenuClosing, setCategoryMenuClosing] = useState(false);
   const [categoryMenuConfirmDelete, setCategoryMenuConfirmDelete] = useState(false);
   const [categoryMenuHoverSuppressed, setCategoryMenuHoverSuppressed] = useState(false);
-  const contentRef = useRef<HTMLTextAreaElement>(null);
-  const windowLabelRef = useRef("main");
-  const previewScrollRef = useRef<HTMLDivElement>(null);
-  const blockOffsets = useRef<number[]>([]);
-  const scrollSource = useRef<"editor" | "preview" | null>(null);
-  const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const measureDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const measureRafRef = useRef<number>(0);
-  const measureControllerRef = useRef<AbortController | null>(null);
-  const prevSelectedIdRef = useRef(selectedId);
-  const externalFileMtimeRef = useRef<number>(0);
-  const lastExternalSaveRef = useRef<number>(0);
+  const memoEditorRef = useRef<MemoEditorHandle | null>(null);
   const imageBaseDir = useImageBaseDir();
   pendingImagesRef.current = pendingImages;
   const pendingImageUrls = useMemo(() => pendingImageObjectUrls(pendingImages), [pendingImages]);
@@ -241,8 +201,6 @@ export function MainWindow({
   titleValueRef.current = title;
   const notesRef = useRef(notes);
   notesRef.current = notes;
-  const externalFilesRef = useRef(externalFiles);
-  externalFilesRef.current = externalFiles;
   // 每次"应用/切换当前笔记"都会自增；异步加载完成后若 epoch 已变化，说明用户
   // 已切换到别处，该次结果直接丢弃，避免旧的加载结果覆盖新选中的笔记
   const loadEpoch = useLoadEpoch();
@@ -256,15 +214,7 @@ export function MainWindow({
   const selectedNoteRef = useRef(selectedNote);
   selectedNoteRef.current = selectedNote;
 
-  const selectedExternalFile = useMemo(
-    () => externalFiles.find((f) => f.id === selectedId) ?? null,
-    [externalFiles, selectedId],
-  );
-  const updateStatusHydratedRef = useRef(false);
-
-  const isExternal = selectedExternalFile !== null;
-  const isExternalRef = useRef(isExternal);
-  isExternalRef.current = isExternal;
+  const isStructuredMemo = selectedId !== null;
 
   const noteMenuTarget = useMemo(
     () => notes.find((note) => note.id === noteMenu?.noteId) ?? null,
@@ -281,108 +231,6 @@ export function MainWindow({
     }),
     [t],
   );
-  const toolbarButtons = useMemo<
-    { label: string; title: string; style: string; action: FormatAction }[]
-  >(
-    () => [
-      {
-        label: "B",
-        title: t("main.toolbar.bold", { defaultValue: "粗体" }),
-        style: "font-bold",
-        action: "bold",
-      },
-      {
-        label: "I",
-        title: t("main.toolbar.italic", { defaultValue: "斜体" }),
-        style: "italic",
-        action: "italic",
-      },
-      {
-        label: "H",
-        title: t("main.toolbar.heading", { defaultValue: "标题" }),
-        style: "font-bold",
-        action: "heading",
-      },
-      {
-        label: "—",
-        title: t("main.toolbar.hr", { defaultValue: "分割线" }),
-        style: "",
-        action: "hr",
-      },
-      {
-        label: "•",
-        title: t("main.toolbar.ul", { defaultValue: "无序列表" }),
-        style: "",
-        action: "ul",
-      },
-      {
-        label: "1.",
-        title: t("main.toolbar.ol", { defaultValue: "有序列表" }),
-        style: "font-mono text-[9px]",
-        action: "ol",
-      },
-      {
-        label: "☐",
-        title: t("main.toolbar.todo", { defaultValue: "待办" }),
-        style: "text-[12px]",
-        action: "todo",
-      },
-      {
-        label: "<>",
-        title: t("main.toolbar.code", { defaultValue: "代码" }),
-        style: "font-mono text-[9px]",
-        action: "code",
-      },
-      {
-        label: "❝",
-        title: t("main.toolbar.quote", { defaultValue: "引用" }),
-        style: "",
-        action: "quote",
-      },
-      {
-        label: "∑",
-        title: t("main.toolbar.inlineMath", { defaultValue: "行内公式" }),
-        style: "font-mono text-[11px]",
-        action: "inlineMath",
-      },
-      {
-        label: "∫",
-        title: t("main.toolbar.blockMath", { defaultValue: "块级公式" }),
-        style: "font-mono text-[11px]",
-        action: "blockMath",
-      },
-    ],
-    [t],
-  );
-  const viewModeOptions = useMemo(
-    () => [
-      {
-        value: "edit" as ViewMode,
-        label: t("settings.defaultView.edit", { defaultValue: "编辑" }),
-      },
-      {
-        value: "split" as ViewMode,
-        label: t("settings.defaultView.split", { defaultValue: "分栏" }),
-      },
-      {
-        value: "preview" as ViewMode,
-        label: t("settings.defaultView.preview", { defaultValue: "预览" }),
-      },
-    ],
-    [t],
-  );
-  const syncUpdateStatus = useCallback((nextStatus: UpdateState) => {
-    const shouldHydrate = !updateStatusHydratedRef.current;
-    if (shouldHydrate) {
-      updateStatusHydratedRef.current = true;
-    }
-
-    setAboutUpdateReminder((current) =>
-      shouldHydrate
-        ? createAboutUpdateReminderState(nextStatus)
-        : applyAboutUpdateStatus(current, nextStatus),
-    );
-  }, []);
   const visibleSidePanel: SidePanelMode | null = aboutOpen
     ? "about"
     : settingsOpen && settingsConfig
@@ -392,7 +240,6 @@ export function MainWindow({
   const openAboutPanel = useCallback(() => {
     setSettingsOpen(false);
     setAboutOpen(true);
-    setAboutUpdateReminder((current) => dismissAboutUpdateReminderText(current));
   }, []);
 
   const filteredNotes = useMemo(() => filterNotes(notes, searchQuery), [notes, searchQuery]);
@@ -402,10 +249,9 @@ export function MainWindow({
     [filteredNotes, categories],
   );
 
-  const lineCount = useMemo(() => content.split("\n").length, [content]);
-  const byteSize = useMemo(
-    () => (new TextEncoder().encode(content).length / 1024).toFixed(1),
-    [content],
+  const lineCount = useMemo(
+    () => (isStructuredMemo ? memoBlockCount(content) : content.split("\n").length),
+    [content, isStructuredMemo],
   );
   const charCount = useMemo(() => countNoteChars(content), [content]);
   const noteFontFamily = useMemo(
@@ -425,6 +271,28 @@ export function MainWindow({
     }));
   }, []);
 
+  const insertPendingImagesIntoMemo = useCallback(
+    (images: PendingImage[]) => {
+      if (images.length === 0) return;
+      addPendingImages(images);
+      const nextContent = appendMemoBlocks(
+        contentValueRef.current,
+        images.map(
+          (image) =>
+            ({
+              id: createMemoBlockId(),
+              type: "image",
+              src: `pending-image://${image.tempId}`,
+              alt: image.fileName,
+            }) satisfies MemoImageBlock,
+        ),
+      );
+      contentValueRef.current = nextContent;
+      setContent(nextContent);
+    },
+    [addPendingImages],
+  );
+
   const clearPendingImages = useCallback(() => {
     revokePendingImages(Object.values(pendingImagesRef.current));
     pendingImagesRef.current = {};
@@ -434,14 +302,15 @@ export function MainWindow({
   const applyNote = useCallback(
     (note: Note) => {
       // 立刻同步各 ref，保证保存快照与守卫在下一次渲染前就能读到最新值
+      const memoContent = serializeMemoDocument(parseMemoContent(note.content));
       loadEpoch.bump();
       selectedIdRef.current = note.id;
       titleValueRef.current = note.title;
-      contentValueRef.current = note.content;
+      contentValueRef.current = memoContent;
       saveStateRef.current = "saved";
       setSelectedId(note.id);
       setTitle(note.title);
-      setContent(note.content);
+      setContent(memoContent);
       clearPendingImages();
       setSaveState("saved");
       setNoteTransitionKey((k) => k + 1);
@@ -492,57 +361,6 @@ export function MainWindow({
     setSaveState("idle");
   }, [loadEpoch, clearPendingImages]);
 
-  const loadExternalFile = useCallback(
-    async (filePath: string) => {
-      const epoch = loadEpoch.bump();
-      try {
-        const [fileContent, mtime] = await Promise.all([
-          readExternalFile(filePath),
-          getFileModifiedTime(filePath),
-        ]);
-        const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
-        const displayTitle = fileName.replace(/\.(md|txt)$/i, "");
-
-        setExternalFiles((current) => {
-          if (current.some((f) => f.id === filePath)) {
-            return current;
-          }
-          return [
-            ...current,
-            {
-              id: filePath,
-              title: displayTitle,
-              filePath,
-            },
-          ];
-        });
-
-        if (!loadEpoch.isCurrent(epoch)) return;
-        selectedIdRef.current = filePath;
-        titleValueRef.current = displayTitle;
-        contentValueRef.current = fileContent;
-        saveStateRef.current = "saved";
-        setSelectedId(filePath);
-        setTitle(displayTitle);
-        setContent(fileContent);
-        setSaveState("saved");
-        setNoteTransitionKey((k) => k + 1);
-        externalFileMtimeRef.current = mtime;
-      } catch (error) {
-        showToast(getErrorMessage(error));
-      }
-    },
-    [loadEpoch],
-  );
-
-  useEffect(() => {
-    try {
-      windowLabelRef.current = getCurrentWindow().label;
-    } catch {
-      windowLabelRef.current = "main";
-    }
-  }, []);
-
   useEffect(() => {
     let cancelled = false;
 
@@ -557,7 +375,6 @@ export function MainWindow({
         if (cancelled) return;
         setSettingsConfig(loadedConfig);
         setSavedDataDir(loadedConfig.dataDir);
-        setViewMode(normalizeViewMode(loadedConfig.defaultViewMode));
         setNotes(loadedNotes);
         setCategories(loadedCategories);
         setCollapsedCategories(new Set(loadedCategories));
@@ -566,13 +383,6 @@ export function MainWindow({
           if (!cancelled) applyNote(note);
         } else {
           clearCurrentNote();
-        }
-
-        if (!cancelled) {
-          const startupFile = await takeStartupFile();
-          if (!cancelled && startupFile) {
-            await loadExternalFile(startupFile);
-          }
         }
       } catch (error) {
         if (!cancelled) showToast(getErrorMessage(error));
@@ -587,111 +397,6 @@ export function MainWindow({
     };
   }, [applyNote, clearCurrentNote]);
 
-  useEffect(() => {
-    let active = true;
-
-    void getUpdateStatus()
-      .then((status) => {
-        if (!active) return;
-        syncUpdateStatus(status);
-      })
-      .catch((error) => {
-        console.error("failed to load update status", error);
-      });
-
-    const bindEvents = async () => {
-      const unlistenFns: UnlistenFn[] = [];
-      const disposeAll = () => {
-        for (const unlisten of unlistenFns.splice(0)) {
-          unlisten();
-        }
-      };
-
-      try {
-        unlistenFns.push(
-          await listen<UpdateState>("update://checking", (event) => {
-            if (!active) return;
-            syncUpdateStatus(event.payload);
-          }),
-        );
-
-        unlistenFns.push(
-          await listen<UpdateState>("update://checked", (event) => {
-            if (!active) return;
-            syncUpdateStatus(event.payload);
-          }),
-        );
-
-        unlistenFns.push(
-          await listen<UpdateState>("update://download-finished", (event) => {
-            if (!active) return;
-            syncUpdateStatus(event.payload);
-          }),
-        );
-
-        unlistenFns.push(
-          await listen<UpdateState>("update://install-finished", (event) => {
-            if (!active) return;
-            syncUpdateStatus(event.payload);
-          }),
-        );
-
-        unlistenFns.push(
-          await listen("update://error", () => {
-            if (!active) return;
-            void getUpdateStatus()
-              .then((status) => {
-                if (!active) return;
-                syncUpdateStatus(status);
-              })
-              .catch((error) => {
-                console.error("failed to refresh update status after error event", error);
-              });
-          }),
-        );
-
-        unlistenFns.push(
-          await listen<UpdateErrorPayload>("update://auto-check-error", (event) => {
-            if (!active) return;
-            console.error("automatic update check failed", event.payload);
-            void getUpdateStatus()
-              .then((status) => {
-                if (!active) return;
-                syncUpdateStatus(status);
-              })
-              .catch((error) => {
-                console.error("failed to refresh update status after automatic check error", error);
-              });
-          }),
-        );
-
-        return disposeAll;
-      } catch (error) {
-        disposeAll();
-        console.error("failed to bind update event listeners", error);
-        return () => undefined;
-      }
-    };
-
-    const promise = bindEvents();
-
-    return () => {
-      active = false;
-      void promise
-        .then((dispose) => dispose())
-        .catch((error) => {
-          console.error("failed to dispose update event listeners", error);
-        });
-    };
-  }, [syncUpdateStatus]);
-
-  useEffect(() => {
-    if (!aboutUpdateReminder.showText) return;
-    const timer = window.setTimeout(() => {
-      setAboutUpdateReminder((current) => dismissAboutUpdateReminderText(current));
-    }, ABOUT_UPDATE_LABEL_DURATION_MS);
-    return () => window.clearTimeout(timer);
-  }, [aboutUpdateReminder.showText]);
   useEffect(() => {
     if (visibleSidePanel) {
       setMountedSidePanel(visibleSidePanel);
@@ -735,11 +440,12 @@ export function MainWindow({
                   if (saveStateRef.current === "dirty" || saveStateRef.current === "saving") {
                     return;
                   }
+                  const memoContent = serializeMemoDocument(parseMemoContent(note.content));
                   titleValueRef.current = note.title;
-                  contentValueRef.current = note.content;
+                  contentValueRef.current = memoContent;
                   saveStateRef.current = "saved";
                   setTitle(note.title);
-                  setContent(note.content);
+                  setContent(memoContent);
                   setSaveState("saved");
                 })
                 .catch(() => undefined);
@@ -774,43 +480,19 @@ export function MainWindow({
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<string>("open-external-file", (event) => {
-      void loadExternalFile(event.payload);
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [loadExternalFile]);
-
-  useEffect(() => {
-    const TEXT_RE = /\.(md|markdown|txt)$/i;
     const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 
     const unlisten = getCurrentWindow().onDragDropEvent((event) => {
       if (event.payload.type !== "drop") return;
-      const textPaths: string[] = [];
-      const imagePaths: string[] = [];
-
-      for (const p of event.payload.paths) {
-        if (TEXT_RE.test(p)) textPaths.push(p);
-        else if (IMAGE_RE.test(p)) imagePaths.push(p);
-      }
-
-      for (const p of textPaths) {
-        void loadExternalFile(p);
-      }
-
-      if (imagePaths.length > 0 && selectedIdRef.current && !isExternalRef.current) {
+      const imagePaths = event.payload.paths.filter((path) => IMAGE_RE.test(path));
+      if (imagePaths.length > 0 && selectedIdRef.current) {
         void (async () => {
-          const textarea = contentRef.current;
-          if (!textarea) return;
           try {
             const pending = await Promise.all(
               imagePaths.map(async (p) => createPendingImage(await readExternalImage(p))),
             );
-            addPendingImages(pending);
-            const markdown = pending.map((image) => pendingImageMarkdown(image.tempId)).join("\n");
-            insertTextAtCursor(textarea, setContent, markdown);
+            if (memoEditorRef.current) memoEditorRef.current.insertImages(pending);
+            else insertPendingImagesIntoMemo(pending);
             saveStateRef.current = "dirty";
             setSaveState("dirty");
           } catch (error) {
@@ -823,7 +505,7 @@ export function MainWindow({
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [loadExternalFile, setContent, addPendingImages]);
+  }, [insertPendingImagesIntoMemo]);
 
   useEffect(() => {
     const unlisten = listen<string>("open-note", (event) => {
@@ -869,31 +551,6 @@ export function MainWindow({
       void unlisten.then((fn) => fn());
     };
   }, []);
-
-  useEffect(() => {
-    if (!selectedExternalFile) return;
-
-    const interval = window.setInterval(async () => {
-      if (Date.now() - lastExternalSaveRef.current < 2000) return;
-      try {
-        const mtime = await getFileModifiedTime(selectedExternalFile.filePath);
-        if (selectedIdRef.current !== selectedExternalFile.id) return;
-        if (mtime !== externalFileMtimeRef.current) {
-          externalFileMtimeRef.current = mtime;
-          const fileContent = await readExternalFile(selectedExternalFile.filePath);
-          if (selectedIdRef.current !== selectedExternalFile.id) return;
-          contentValueRef.current = fileContent;
-          saveStateRef.current = "saved";
-          setContent(fileContent);
-          setSaveState("saved");
-        }
-      } catch {
-        // file may have been deleted or become inaccessible
-      }
-    }, 1000);
-
-    return () => window.clearInterval(interval);
-  }, [selectedExternalFile]);
 
   useEffect(() => {
     function closeMenus() {
@@ -953,7 +610,9 @@ export function MainWindow({
 
   const persistPendingImages = useCallback(async (noteId: string, snapshot: string) => {
     const ids = extractPendingImageIds(snapshot);
-    if (ids.length === 0) return snapshot;
+    if (ids.length === 0) {
+      return { content: snapshot, replacements: {} as Record<string, string> };
+    }
 
     const replacements: Record<string, string> = {};
     const savedImages: PendingImage[] = [];
@@ -964,7 +623,9 @@ export function MainWindow({
       savedImages.push(image);
     }
 
-    if (Object.keys(replacements).length === 0) return snapshot;
+    if (Object.keys(replacements).length === 0) {
+      return { content: snapshot, replacements };
+    }
     const nextContent = replacePendingImageRefs(snapshot, replacements);
     setPendingImages((current) => {
       const next = { ...current };
@@ -975,7 +636,7 @@ export function MainWindow({
       return next;
     });
     revokePendingImages(savedImages);
-    return nextContent;
+    return { content: nextContent, replacements };
   }, []);
 
   const performSave = useCallback(
@@ -996,35 +657,27 @@ export function MainWindow({
         setSaveState(state);
       };
 
-      const externalFile = externalFilesRef.current.find((file) => file.id === id) ?? null;
-
       settleSaveState("saving");
       try {
-        if (externalFile) {
-          await saveExternalFile(externalFile.filePath, contentSnapshot);
-          lastExternalSaveRef.current = Date.now();
-          const mtime = await getFileModifiedTime(externalFile.filePath);
-          if (stillCurrent()) {
-            externalFileMtimeRef.current = mtime;
-          }
-          settleSaveState(contentValueRef.current === contentSnapshot ? "saved" : "dirty");
-        } else {
-          const category = notesRef.current.find((note) => note.id === id)?.category ?? "";
-          const persistedContent = await persistPendingImages(id, contentSnapshot);
-          if (persistedContent !== contentSnapshot && stillCurrent()) {
-            contentValueRef.current = persistedContent;
-            setContent(persistedContent);
-          }
-          const note = await updateNote(id, {
-            title: titleSnapshot,
-            content: persistedContent,
-            category,
-          });
-          replaceNoteMetadata(note);
-          const contentChanged =
-            contentValueRef.current !== persistedContent || titleValueRef.current !== titleSnapshot;
-          settleSaveState(contentChanged ? "dirty" : "saved");
+        const category = notesRef.current.find((note) => note.id === id)?.category ?? "";
+        const { content: persistedContent, replacements } = await persistPendingImages(
+          id,
+          contentSnapshot,
+        );
+        if (persistedContent !== contentSnapshot && stillCurrent()) {
+          const currentContent = replacePendingImageRefs(contentValueRef.current, replacements);
+          contentValueRef.current = currentContent;
+          setContent(currentContent);
         }
+        const note = await updateNote(id, {
+          title: titleSnapshot,
+          content: persistedContent,
+          category,
+        });
+        replaceNoteMetadata(note);
+        const contentChanged =
+          contentValueRef.current !== persistedContent || titleValueRef.current !== titleSnapshot;
+        settleSaveState(contentChanged ? "dirty" : "saved");
         return true;
       } catch (error) {
         settleSaveState("error");
@@ -1045,113 +698,25 @@ export function MainWindow({
   );
 
   useEffect(() => {
-    const unlisten = listen<UpdateInstallPrepareRequest>("update://prepare-install", (event) => {
-      const respond = async () => {
-        const windowLabel = windowLabelRef.current;
-        // 无未保存修改时直接上报就绪：避免排进 saveQueueRef，被正在执行的
-        // 防抖自动保存拖住、不必要地延迟安装准备响应
-        if (saveStateRef.current !== "dirty") {
-          await reportInstallPreparation(event.payload.requestId, windowLabel, "ready");
-          return;
-        }
-        const saved = await saveCurrentNote();
-        await reportInstallPreparation(
-          event.payload.requestId,
-          windowLabel,
-          saved ? "ready" : "failed",
-          saved
-            ? undefined
-            : t("settings.update.error.installSaveFailed", {
-                defaultValue: "安装前自动保存失败，请先处理当前笔记后重试",
-              }),
-        );
-      };
-
-      void respond().catch(async (error) => {
-        await reportInstallPreparation(
-          event.payload.requestId,
-          windowLabelRef.current,
-          "failed",
-          error instanceof Error
-            ? error.message
-            : t("settings.update.error.installSaveFailed", {
-                defaultValue: "安装前自动保存失败，请先处理当前笔记后重试",
-              }),
-        ).catch(() => undefined);
-      });
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [saveCurrentNote, t]);
-
-  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key === "s") {
         event.preventDefault();
         void saveCurrentNote(true);
-        return;
-      }
-
-      const textarea = contentRef.current;
-      if (!textarea || document.activeElement !== textarea) return;
-      const modifier = event.ctrlKey || event.metaKey;
-      if (!modifier) return;
-
-      let action: FormatAction | null = null;
-      const key = event.key.toLowerCase();
-      if (key === "b") action = "bold";
-      else if (key === "i") action = "italic";
-      else if (event.altKey && key === "h") action = "heading";
-      else if (event.altKey && key === "t") action = "todo";
-      else if (event.shiftKey && event.key === "7") action = "ol";
-      else if (event.shiftKey && event.key === "8") action = "ul";
-
-      if (action) {
-        event.preventDefault();
-        applyMarkdownFormat({
-          textarea,
-          action,
-          translate: t,
-          setContent,
-          markDirty,
-        });
       }
     }
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [saveCurrentNote, t]);
-
-  useEffect(() => {
-    if (!selectedId || saveState !== "dirty") return undefined;
-    if (isExternal) {
-      if (!settingsConfig?.externalFileAutoSave) return undefined;
-    } else {
-      if (!settingsConfig?.noteAutoSave) return undefined;
-    }
-
-    const timer = window.setTimeout(() => {
-      void saveCurrentNote();
-    }, 900);
-
-    return () => window.clearTimeout(timer);
-  }, [
-    // content 与 title 用于在持续输入时不断重置防抖计时器
-    content,
-    title,
-    isExternal,
-    saveCurrentNote,
-    saveState,
-    selectedId,
-    settingsConfig?.noteAutoSave,
-    settingsConfig?.externalFileAutoSave,
-  ]);
+  }, [saveCurrentNote]);
 
   const handleNewNote = async () => {
     await saveCurrentNote();
     try {
-      const note = await createNote({ title: "", content: "", category: activeCategory });
+      const note = await createNote({
+        title: "",
+        content: createEmptyMemoContent(),
+        category: activeCategory,
+      });
       replaceNoteMetadata(note);
       applyNote(note);
     } catch (error) {
@@ -1171,7 +736,6 @@ export function MainWindow({
       const config = await getConfig();
       setSettingsConfig(config);
       setSavedDataDir(config.dataDir);
-      setViewMode(normalizeViewMode(config.defaultViewMode));
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -1216,14 +780,12 @@ export function MainWindow({
         const previousDataDir = savedDataDir ?? nextConfig.dataDir;
         const normalizedConfig = {
           ...nextConfig,
-          defaultViewMode: normalizeViewMode(nextConfig.defaultViewMode),
           tileColor: normalizeTileColor(nextConfig.tileColor),
         };
         try {
           const savedConfig = await saveConfig(normalizedConfig);
           setSettingsConfig(savedConfig);
           setSavedDataDir(savedConfig.dataDir);
-          setViewMode(normalizeViewMode(savedConfig.defaultViewMode));
 
           if (savedConfig.dataDir !== previousDataDir) {
             const loadedNotes = await refreshNotes();
@@ -1259,7 +821,6 @@ export function MainWindow({
       const nextOpen = !open;
       if (nextOpen) {
         setSettingsOpen(false);
-        setAboutUpdateReminder((current) => dismissAboutUpdateReminderText(current));
       }
       return nextOpen;
     });
@@ -1268,21 +829,6 @@ export function MainWindow({
   const handleCloseAbout = useCallback(() => {
     setAboutOpen(false);
   }, []);
-
-  const handleImportNote = async () => {
-    try {
-      const saved = await saveCurrentNote();
-      if (!saved) return;
-
-      const note = await importMarkdownNote(activeCategory);
-      if (!note) return;
-
-      replaceNoteMetadata(note);
-      applyNote(note);
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  };
 
   const handleSelectNote = async (id: string) => {
     if (id === selectedId) return;
@@ -1297,58 +843,6 @@ export function MainWindow({
       showToast(getErrorMessage(error));
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleSelectExternalFile = async (id: string) => {
-    if (id === selectedId) return;
-    setDeleteConfirm(false);
-    await saveCurrentNote();
-
-    const file = externalFiles.find((f) => f.id === id);
-    if (!file) return;
-
-    setIsLoading(true);
-    const epoch = loadEpoch.bump();
-    try {
-      const [fileContent, mtime] = await Promise.all([
-        readExternalFile(file.filePath),
-        getFileModifiedTime(file.filePath),
-      ]);
-      if (!loadEpoch.isCurrent(epoch)) return;
-      selectedIdRef.current = id;
-      titleValueRef.current = file.title;
-      contentValueRef.current = fileContent;
-      saveStateRef.current = "saved";
-      setSelectedId(id);
-      setTitle(file.title);
-      setContent(fileContent);
-      setSaveState("saved");
-      setNoteTransitionKey((k) => k + 1);
-      externalFileMtimeRef.current = mtime;
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleRemoveExternalFile = async (id: string) => {
-    if (selectedId === id && saveState === "dirty") {
-      const shouldSave = window.confirm(
-        t("main.confirm.unsavedExternalFile", {
-          title: title || t("common.untitledFile", { defaultValue: "未命名文件" }),
-          defaultValue: "「{{title}}」有未保存的更改，是否保存到原文件？",
-        }),
-      );
-      if (shouldSave) {
-        const saved = await saveCurrentNote();
-        if (!saved) return;
-      }
-    }
-    setExternalFiles((current) => current.filter((f) => f.id !== id));
-    if (selectedId === id) {
-      clearCurrentNote();
     }
   };
 
@@ -1374,7 +868,7 @@ export function MainWindow({
     event.stopPropagation();
 
     const menuWidth = 168;
-    const menuHeight = 76;
+    const menuHeight = 104;
     const x = Math.min(event.clientX, window.innerWidth - menuWidth - 4);
     const y = Math.min(event.clientY, window.innerHeight - menuHeight - 4);
 
@@ -1387,17 +881,21 @@ export function MainWindow({
     });
   };
 
-  const handleExportNote = async (note: NoteMetadata) => {
+  const handleExportNote = async (noteId: string, noteTitle: string) => {
+    const exportTitle = noteId === selectedIdRef.current ? titleValueRef.current : noteTitle;
     try {
-      if (note.id === selectedId) {
-        const saved = await saveCurrentNote();
+      const path = await chooseMarkdownExportPath(
+        exportTitle || t("common.untitledNote", { defaultValue: "无标题便签" }),
+      );
+      if (!path) return;
+
+      if (noteId === selectedIdRef.current) {
+        const saved = await saveCurrentNote(saveStateRef.current === "error");
         if (!saved) return;
       }
 
-      await exportMarkdownNote({
-        id: note.id,
-        title: note.id === selectedId ? title : note.title,
-      });
+      await exportNoteMarkdown(noteId, path);
+      showToast(t("noteMenu.exported", { defaultValue: "Markdown 已导出" }), "info");
     } catch (error) {
       showToast(getErrorMessage(error));
     }
@@ -1407,18 +905,17 @@ export function MainWindow({
     const note = noteMenuTarget;
     if (!note) return;
 
-    if (action === "export") {
-      setNoteMenuClosing(true);
-      void handleExportNote(note);
-      return;
-    }
-
     if (action === "move") {
       setNoteMenuMode("move");
       return;
     }
 
     setNoteMenuClosing(true);
+    if (action === "export") {
+      void handleExportNote(note.id, note.title);
+      return;
+    }
+
     void handleDeleteNote(note.id);
   };
 
@@ -1495,40 +992,15 @@ export function MainWindow({
     setSaveState("dirty");
   };
 
-  const {
-    handlePaste: imagePasteHandler,
-    handleDrop: imageDropHandler,
-    handleDragOver: imageDragOverHandler,
-  } = useImagePaste({
-    textareaRef: contentRef,
-    setContent,
-    markDirty,
-    onAddPendingImages: addPendingImages,
-    disabled: isExternal,
-    onError: showToast,
-    t,
-  });
-
   const handleImportImage = async () => {
-    if (!selectedId || isExternal) {
-      showToast(t("main.images.managedOnly", { defaultValue: "图片导入仅支持应用内笔记" }), "info");
-      return;
-    }
+    if (!selectedId) return;
     try {
       const filePath = await chooseNoteImage();
       if (!filePath) return;
       const imageData = await readExternalImage(filePath);
       const pendingImage = createPendingImage(imageData);
-      addPendingImages([pendingImage]);
-      const textarea = contentRef.current;
-      if (textarea) {
-        insertTextAtCursor(textarea, setContent, pendingImageMarkdown(pendingImage.tempId));
-      } else {
-        const insertion = `\n${pendingImageMarkdown(pendingImage.tempId)}\n`;
-        const nextContent = contentValueRef.current + insertion;
-        contentValueRef.current = nextContent;
-        setContent(nextContent);
-      }
+      if (memoEditorRef.current) memoEditorRef.current.insertImages([pendingImage]);
+      else insertPendingImagesIntoMemo([pendingImage]);
       markDirty();
     } catch (error) {
       showToast(getErrorMessage(error));
@@ -1537,8 +1009,9 @@ export function MainWindow({
 
   const handleClearNoteContent = () => {
     if (!selectedId) return;
-    setContent("");
-    contentValueRef.current = "";
+    const nextContent = createEmptyMemoContent();
+    setContent(nextContent);
+    contentValueRef.current = nextContent;
     revokePendingImages(Object.values(pendingImagesRef.current));
     pendingImagesRef.current = {};
     setPendingImages({});
@@ -1547,7 +1020,7 @@ export function MainWindow({
   };
 
   const handleCleanUnusedImages = async () => {
-    if (!selectedId || isExternal) return;
+    if (!selectedId) return;
     try {
       const removed = await cleanUnusedImages(selectedId, content);
       if (removed.length > 0) {
@@ -1568,20 +1041,12 @@ export function MainWindow({
 
   const handleUndo = () => {
     if (!selectedId) return;
-    const textarea = contentRef.current;
-    if (runEditorCommand(textarea, "undo")) {
-      setContent(textarea?.value ?? content);
-      markDirty();
-    }
+    memoEditorRef.current?.undo();
   };
 
   const handleRedo = () => {
     if (!selectedId) return;
-    const textarea = contentRef.current;
-    if (runEditorCommand(textarea, "redo")) {
-      setContent(textarea?.value ?? content);
-      markDirty();
-    }
+    memoEditorRef.current?.redo();
   };
 
   const handleOpenNotepad = async () => {
@@ -1626,191 +1091,6 @@ export function MainWindow({
     };
   }, [isResizingSidebar]);
 
-  useEffect(() => {
-    if (!isResizingSplit) return;
-
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-
-    const onMouseMove = (e: globalThis.MouseEvent) => {
-      const container = splitContainerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      const ratio = (e.clientX - rect.left) / rect.width;
-      setSplitRatio(Math.min(Math.max(ratio, 0.2), 0.8));
-    };
-    const onMouseUp = () => setIsResizingSplit(false);
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-    return () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    };
-  }, [isResizingSplit]);
-
-  const cancelScrollMeasurement = useCallback(() => {
-    if (measureDebounceRef.current) clearTimeout(measureDebounceRef.current);
-    cancelAnimationFrame(measureRafRef.current);
-    measureControllerRef.current?.abort();
-  }, []);
-
-  const scrollSyncEnabled = settingsConfig?.splitScrollSync ?? true;
-
-  const scheduleScrollMeasurement = useCallback(
-    (delayMs: number) => {
-      if (viewMode !== "split" || !scrollSyncEnabled) return;
-      if (!contentRef.current || !previewScrollRef.current) return;
-
-      // 布局和测量稳定前先清空旧偏移量
-      blockOffsets.current = [];
-      cancelScrollMeasurement();
-
-      const controller = new AbortController();
-      measureControllerRef.current = controller;
-
-      const measure = async () => {
-        if (!contentRef.current || !previewScrollRef.current) return;
-        const offsets = await measureBlockOffsets(content, contentRef.current, controller.signal);
-        if (controller.signal.aborted) return;
-        blockOffsets.current = offsets;
-        if (!controller.signal.aborted && previewScrollRef.current) {
-          tagPreviewBlocks(previewScrollRef.current);
-        }
-      };
-
-      const runAfterLayout = () => {
-        measureRafRef.current = requestAnimationFrame(() => {
-          void measure();
-        });
-      };
-
-      if (delayMs > 0) {
-        measureDebounceRef.current = setTimeout(runAfterLayout, delayMs);
-      } else {
-        runAfterLayout();
-      }
-    },
-    [cancelScrollMeasurement, content, scrollSyncEnabled, viewMode],
-  );
-
-  // 切换笔记时通过 rAF 测量（不阻塞首帧渲染），编辑时 debounce 避免频繁重排
-  useEffect(() => {
-    if (viewMode !== "split" || !scrollSyncEnabled) {
-      blockOffsets.current = [];
-      cancelScrollMeasurement();
-      return;
-    }
-
-    const isNoteSwitch = prevSelectedIdRef.current !== selectedId;
-    prevSelectedIdRef.current = selectedId;
-    scheduleScrollMeasurement(isNoteSwitch ? 0 : 250);
-
-    return () => {
-      cancelScrollMeasurement();
-    };
-  }, [
-    cancelScrollMeasurement,
-    content,
-    scrollSyncEnabled,
-    scheduleScrollMeasurement,
-    selectedId,
-    settingsConfig?.fontSize,
-    settingsConfig?.renderHtmlMarkdown,
-    splitRatio,
-    viewMode,
-  ]);
-
-  useEffect(() => {
-    if (viewMode !== "split") return;
-
-    const observedElements: Element[] = [];
-    if (splitContainerRef.current) observedElements.push(splitContainerRef.current);
-    if (contentRef.current) observedElements.push(contentRef.current);
-    if (previewScrollRef.current) observedElements.push(previewScrollRef.current);
-
-    if (typeof ResizeObserver === "undefined") {
-      const handleResize = () => scheduleScrollMeasurement(120);
-      window.addEventListener("resize", handleResize);
-      return () => window.removeEventListener("resize", handleResize);
-    }
-
-    if (observedElements.length === 0) return;
-
-    const observer = new ResizeObserver(() => {
-      scheduleScrollMeasurement(120);
-    });
-    observedElements.forEach((element) => observer.observe(element));
-
-    return () => observer.disconnect();
-  }, [scheduleScrollMeasurement, viewMode]);
-
-  // Reset preview scroll on note switch
-  useEffect(() => {
-    if (previewScrollRef.current) {
-      previewScrollRef.current.scrollTop = 0;
-    }
-  }, [selectedId]);
-
-  const handleEditorScroll = useCallback(() => {
-    if (viewMode !== "split") return;
-    if (scrollSource.current === "preview") return;
-
-    const textarea = contentRef.current;
-    const preview = previewScrollRef.current;
-    if (!textarea || !preview) return;
-
-    scrollSource.current = "editor";
-    if (scrollTimer.current) clearTimeout(scrollTimer.current);
-    scrollTimer.current = setTimeout(() => {
-      scrollSource.current = null;
-    }, 150);
-
-    const offsets = blockOffsets.current;
-    if (offsets.length === 0) return;
-
-    const blockIdx = blockIndexAtOffset(offsets, textarea.scrollTop);
-    const el = preview.querySelector<HTMLElement>(`[data-block-index="${blockIdx}"]`);
-    if (!el) return;
-
-    el.scrollIntoView({ block: "start", behavior: "instant" });
-  }, [viewMode]);
-
-  const handlePreviewScroll = useCallback(() => {
-    if (viewMode !== "split") return;
-    if (scrollSource.current === "editor") return;
-
-    const textarea = contentRef.current;
-    const preview = previewScrollRef.current;
-    if (!textarea || !preview) return;
-
-    scrollSource.current = "preview";
-    if (scrollTimer.current) clearTimeout(scrollTimer.current);
-    scrollTimer.current = setTimeout(() => {
-      scrollSource.current = null;
-    }, 150);
-
-    const elements = preview.querySelectorAll<HTMLElement>("[data-block-index]");
-    if (elements.length === 0) return;
-
-    const containerRect = preview.getBoundingClientRect();
-    let topDomIndex = 0;
-    for (const el of elements) {
-      const rect = el.getBoundingClientRect();
-      if (rect.bottom > containerRect.top + 1) {
-        topDomIndex = parseInt(el.getAttribute("data-block-index")!, 10);
-        break;
-      }
-    }
-
-    const offsets = blockOffsets.current;
-    if (topDomIndex >= offsets.length) return;
-
-    textarea.scrollTop = offsets[topDomIndex];
-  }, [viewMode]);
-
   const handlePinEntry = async () => {
     if (!selectedId) return;
     const isPinned = pinnedTileIds.has(selectedId);
@@ -1854,11 +1134,7 @@ export function MainWindow({
   const handleClose = () => {
     void closeCurrentWindow();
   };
-  const aboutButtonLabel = t("settings.update.title", { defaultValue: "更新" });
-  const aboutButtonExpanded = aboutUpdateReminder.showText;
-  const aboutButtonTitle = aboutUpdateReminder.hasPendingUpdate
-    ? aboutButtonLabel
-    : t("main.window.about", { defaultValue: "关于" });
+  const aboutButtonTitle = t("main.window.about", { defaultValue: "关于" });
 
   return (
     <div className="w-full h-screen flex flex-col">
@@ -1880,7 +1156,7 @@ export function MainWindow({
             <span className="text-[11px] text-ink-faint font-body truncate max-w-[240px] leading-none translate-y-px">
               {title ||
                 selectedNote?.preview ||
-                t("common.untitledNote", { defaultValue: "无标题笔记" })}
+                t("common.untitledNote", { defaultValue: "无标题便签" })}
             </span>
           </div>
           <div className="flex items-center">
@@ -1924,57 +1200,25 @@ export function MainWindow({
             </button>
             <button
               onClick={handleOpenAbout}
-              className={`h-11 flex items-center justify-center overflow-hidden text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-[width,padding,gap,background-color,color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
-                aboutButtonExpanded ? "w-[72px] gap-1.5 px-3" : "w-10 gap-0 px-0"
-              }`}
+              className="w-10 h-11 flex items-center justify-center text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer"
               title={aboutButtonTitle}
               aria-label={aboutButtonTitle}
             >
-              {aboutUpdateReminder.hasPendingUpdate ? (
-                <svg
-                  data-testid="main-about-update-icon"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 16V8" />
-                  <path d="m8.5 11.5 3.5-3.5 3.5 3.5" />
-                </svg>
-              ) : (
-                <svg
-                  data-testid="main-about-info-icon"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 16v-4" />
-                  <path d="M12 8h.01" />
-                </svg>
-              )}
-              {aboutUpdateReminder.hasPendingUpdate ? (
-                <span
-                  data-testid="main-about-update-label"
-                  className={`overflow-hidden whitespace-nowrap text-[11px] font-body leading-none transition-[max-width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                    aboutButtonExpanded
-                      ? "max-w-[24px] translate-x-0 opacity-100"
-                      : "max-w-0 translate-x-1 opacity-0"
-                  }`}
-                >
-                  {aboutButtonLabel}
-                </span>
-              ) : null}
+              <svg
+                data-testid="main-about-info-icon"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4" />
+                <path d="M12 8h.01" />
+              </svg>
             </button>
 
             {!isMacOS && (
@@ -2071,7 +1315,9 @@ export function MainWindow({
                     type="text"
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder={t("main.sidebar.searchPlaceholder", { defaultValue: "搜索笔记…" })}
+                    placeholder={t("main.sidebar.searchPlaceholder", {
+                      defaultValue: "搜索便签…",
+                    })}
                     className="flex-1 text-[12px] font-body text-ink placeholder:text-ink-ghost/60 bg-transparent"
                   />
                   {searchQuery && (
@@ -2113,27 +1359,7 @@ export function MainWindow({
                   >
                     <path d="M12 5v14M5 12h14" />
                   </svg>
-                  <span>{t("main.sidebar.newNote", { defaultValue: "新建笔记" })}</span>
-                </button>
-                <button
-                  onClick={() => void handleImportNote()}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[12px] font-body text-ink-faint hover:text-bamboo hover:bg-bamboo-mist/50 transition-all cursor-pointer group"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 3v12" />
-                    <path d="m7 10 5 5 5-5" />
-                    <path d="M5 21h14" />
-                  </svg>
-                  <span>{t("main.sidebar.importMarkdown", { defaultValue: "导入 Markdown" })}</span>
+                  <span>{t("main.sidebar.newNote", { defaultValue: "新建便签" })}</span>
                 </button>
               </div>
 
@@ -2141,14 +1367,8 @@ export function MainWindow({
                 <span className="text-[10px] text-ink-ghost font-mono tracking-wider uppercase">
                   {t("common.noteCount", {
                     count: filteredNotes.length,
-                    defaultValue: "{{count}} 篇笔记",
+                    defaultValue: "{{count}} 张便签",
                   })}
-                  {externalFiles.length > 0
-                    ? ` · ${t("common.externalFileCount", {
-                        count: externalFiles.length,
-                        defaultValue: "{{count}} 个外部文件",
-                      })}`
-                    : ""}
                 </span>
                 <button
                   onMouseDown={(e) => e.preventDefault()}
@@ -2199,91 +1419,6 @@ export function MainWindow({
 
               <div className="flex-1 overflow-y-auto px-2 pb-2">
                 <div className="space-y-0.5">
-                  {externalFiles.length > 0 && (
-                    <>
-                      <div className="px-3 py-1.5 text-[10px] text-ink-ghost/50 font-mono tracking-wider uppercase">
-                        {t("main.externalFiles.title", { defaultValue: "外部文件" })}
-                      </div>
-                      {externalFiles.map((file) => {
-                        const isSelected = file.id === selectedId;
-                        const isHovered = file.id === hoveredId;
-
-                        return (
-                          <button
-                            key={file.id}
-                            onClick={() => void handleSelectExternalFile(file.id)}
-                            onMouseEnter={() => setHoveredId(file.id)}
-                            onMouseLeave={() => setHoveredId(null)}
-                            className={`w-full text-left rounded-xl px-3 py-2.5 transition-all duration-[600ms] cursor-pointer group relative ${
-                              isSelected
-                                ? "bg-bamboo-mist/70"
-                                : isHovered
-                                  ? "bg-paper-warm/70"
-                                  : "bg-transparent"
-                            }`}
-                          >
-                            <div
-                              className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-bamboo/60 transition-all duration-[600ms] ${
-                                isSelected ? "h-5 opacity-100" : "h-0 opacity-0"
-                              }`}
-                            />
-
-                            <div className="flex items-baseline justify-between mb-0.5">
-                              <span
-                                className={`text-[13px] font-display font-medium truncate pr-2 transition-colors flex items-center gap-1.5 ${
-                                  isSelected ? "text-bamboo" : "text-ink-soft"
-                                }`}
-                              >
-                                <svg
-                                  width="12"
-                                  height="12"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  className="shrink-0 opacity-60"
-                                >
-                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                  <polyline points="14 2 14 8 20 8" />
-                                </svg>
-                                {file.title}
-                              </span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemoveExternalFile(file.id);
-                                }}
-                                className="opacity-0 group-hover:opacity-100 text-ink-ghost hover:text-red-400 transition-all p-0.5"
-                                title={t("main.externalFiles.remove", {
-                                  defaultValue: "从列表移除",
-                                })}
-                              >
-                                <svg
-                                  width="12"
-                                  height="12"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                >
-                                  <line x1="18" y1="6" x2="6" y2="18" />
-                                  <line x1="6" y1="6" x2="18" y2="18" />
-                                </svg>
-                              </button>
-                            </div>
-
-                            <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors pl-[18px]">
-                              {file.filePath}
-                            </p>
-                          </button>
-                        );
-                      })}
-                    </>
-                  )}
-
                   {categoryGroups.map((group: CategoryGroup) => {
                     if (!group.category) {
                       return (
@@ -2351,7 +1486,7 @@ export function MainWindow({
                                 </div>
                                 <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
                                   {note.preview ||
-                                    t("common.blankNote", { defaultValue: "空白笔记" })}
+                                    t("common.blankNote", { defaultValue: "空白便签" })}
                                 </p>
                                 <div className="flex items-center gap-2 mt-1">
                                   <span className="text-[10px] text-ink-ghost/60 font-mono tabular-nums">
@@ -2531,7 +1666,7 @@ export function MainWindow({
 
                                     <p className="text-[11px] text-ink-ghost leading-relaxed line-clamp-2 group-hover:text-ink-faint transition-colors">
                                       {note.preview ||
-                                        t("common.blankNote", { defaultValue: "空白笔记" })}
+                                        t("common.blankNote", { defaultValue: "空白便签" })}
                                     </p>
 
                                     <div className="flex items-center gap-2 mt-1">
@@ -2556,11 +1691,11 @@ export function MainWindow({
                     );
                   })}
 
-                  {!isLoading && filteredNotes.length === 0 && externalFiles.length === 0 && (
+                  {!isLoading && filteredNotes.length === 0 && (
                     <div className="px-3 py-8 text-center text-[12px] text-ink-ghost leading-relaxed">
                       {searchQuery
-                        ? t("main.search.noResults", { defaultValue: "没有匹配的笔记" })
-                        : t("main.search.empty", { defaultValue: "还没有笔记" })}
+                        ? t("main.search.noResults", { defaultValue: "没有匹配的便签" })
+                        : t("main.search.empty", { defaultValue: "还没有便签" })}
                     </div>
                   )}
                 </div>
@@ -2688,52 +1823,190 @@ export function MainWindow({
                   </svg>
                 </button>
 
+                <span className="h-4 w-px bg-paper-deep/50 mx-0.5" />
+
                 <button
-                  onClick={() => void handleImportImage()}
-                  disabled={!selectedId || isExternal}
-                  className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                  title={t("main.images.import", { defaultValue: "导入图片" })}
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => memoEditorRef.current?.toggleBold()}
+                  disabled={!selectedId}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg font-bold text-[13px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  title={t("memo.bold", { defaultValue: "加粗" })}
+                  aria-label={t("memo.bold", { defaultValue: "加粗" })}
                 >
-                  {t("main.images.importShort", { defaultValue: "图片" })}
+                  B
                 </button>
 
                 <button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => memoEditorRef.current?.toggleItalic()}
+                  disabled={!selectedId}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg italic font-serif text-[13px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  title={t("memo.italic", { defaultValue: "斜体" })}
+                  aria-label={t("memo.italic", { defaultValue: "斜体" })}
+                >
+                  I
+                </button>
+
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => memoEditorRef.current?.toggleUnderline()}
+                  disabled={!selectedId}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg underline text-[13px] text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  title={t("memo.underline", { defaultValue: "下划线" })}
+                  aria-label={t("memo.underline", { defaultValue: "下划线" })}
+                >
+                  U
+                </button>
+
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => memoEditorRef.current?.toggleTodo()}
+                  disabled={!selectedId}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  title={t("memo.toggleTodo", { defaultValue: "切换待办" })}
+                  aria-label={t("memo.toggleTodo", { defaultValue: "切换待办" })}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="3" width="5" height="5" rx="1" />
+                    <path d="M10.5 5.5H17M10.5 13.5H17M3 13.5h5" />
+                  </svg>
+                </button>
+
+                <span className="h-4 w-px bg-paper-deep/50 mx-0.5" />
+
+                <button
+                  type="button"
+                  onClick={() => void handleImportImage()}
+                  disabled={!selectedId}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  title={t("main.images.import", { defaultValue: "导入图片" })}
+                  aria-label={t("main.images.import", { defaultValue: "导入图片" })}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                    <circle cx="8.5" cy="9" r="1.5" />
+                    <path d="m4 17 5-5 4 4 2.5-2.5L20 18" />
+                  </svg>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => void saveCurrentNote(true)}
                   disabled={!selectedId || saveState === "saving"}
-                  className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                   title={t("common.save", { defaultValue: "保存" })}
+                  aria-label={t("common.save", { defaultValue: "保存" })}
                 >
-                  {t("common.save", { defaultValue: "保存" })}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M5 3h12l2 2v16H5Z" />
+                    <path d="M8 3v6h8V3M8 21v-7h8v7" />
+                  </svg>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedNote) void handleExportNote(selectedNote.id, selectedNote.title);
+                  }}
+                  disabled={!selectedNote || saveState === "saving"}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  title={t("noteMenu.export", { defaultValue: "导出 Markdown" })}
+                  aria-label={t("noteMenu.export", { defaultValue: "导出 Markdown" })}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 3v12" />
+                    <path d="m7 10 5 5 5-5" />
+                    <path d="M5 21h14" />
+                  </svg>
                 </button>
 
                 {clearConfirm ? (
                   <div className="flex items-center gap-1 ml-1 animate-delete-confirm">
-                    <span className="text-[11px] text-amber-500 whitespace-nowrap">
+                    <span className="sr-only">
                       {t("main.editor.confirmClear", { defaultValue: "确认清空？" })}
                     </span>
                     <button
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={handleClearNoteContent}
-                      className="px-2 h-6 rounded-md text-[11px] text-cloud bg-amber-500 hover:bg-amber-600 transition-colors cursor-pointer whitespace-nowrap outline-none"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-cloud bg-amber-500 hover:bg-amber-600 transition-colors cursor-pointer outline-none"
                     >
-                      {t("common.clear", { defaultValue: "清空" })}
+                      <span aria-hidden="true">✓</span>
                     </button>
                     <button
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => setClearConfirm(false)}
-                      className="px-2 h-6 rounded-md text-[11px] text-ink-faint hover:text-ink-soft hover:bg-paper-warm transition-colors cursor-pointer outline-none"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-faint hover:text-ink-soft hover:bg-paper-warm transition-colors cursor-pointer outline-none"
                     >
-                      {t("common.cancel", { defaultValue: "取消" })}
+                      <span aria-hidden="true">×</span>
                     </button>
                   </div>
                 ) : (
                   <button
+                    type="button"
                     onClick={() => setClearConfirm(true)}
-                    disabled={!selectedId || !content}
-                    className="px-2.5 h-7 flex items-center justify-center rounded-lg text-[11px] text-ink-ghost hover:text-amber-500 hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                    disabled={
+                      !selectedId || (isStructuredMemo ? !memoHasContent(content) : !content)
+                    }
+                    className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-amber-500 hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                     title={t("main.editor.clearContent", { defaultValue: "清空正文" })}
+                    aria-label={t("main.editor.clearContent", { defaultValue: "清空正文" })}
                   >
-                    {t("common.clear", { defaultValue: "清空" })}
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="m4 15 8-10 8 7-6 8H8Z" />
+                      <path d="m10 20 7-9" />
+                    </svg>
                   </button>
                 )}
 
@@ -2741,7 +2014,7 @@ export function MainWindow({
                   <div
                     className={`flex items-center gap-1 ml-1 ${deleteExiting ? "animate-delete-confirm-exit" : "animate-delete-confirm"}`}
                   >
-                    <span className="text-[11px] text-red-400 whitespace-nowrap">
+                    <span className="sr-only">
                       {t("main.editor.confirmDelete", { defaultValue: "确认删除？" })}
                     </span>
                     <button
@@ -2754,9 +2027,9 @@ export function MainWindow({
                           void handleDeleteNote();
                         }, 150);
                       }}
-                      className="px-2 h-6 rounded-md text-[11px] text-cloud bg-red-400 hover:bg-red-500 transition-colors cursor-pointer whitespace-nowrap outline-none"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-cloud bg-red-400 hover:bg-red-500 transition-colors cursor-pointer outline-none"
                     >
-                      {t("common.delete", { defaultValue: "删除" })}
+                      <span aria-hidden="true">✓</span>
                     </button>
                     <button
                       onMouseDown={(event) => event.preventDefault()}
@@ -2767,9 +2040,9 @@ export function MainWindow({
                           setDeleteConfirm(false);
                         }, 150);
                       }}
-                      className="px-2 h-6 rounded-md text-[11px] text-ink-faint hover:text-ink-soft hover:bg-paper-warm transition-colors cursor-pointer outline-none"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-faint hover:text-ink-soft hover:bg-paper-warm transition-colors cursor-pointer outline-none"
                     >
-                      {t("common.cancel", { defaultValue: "取消" })}
+                      <span aria-hidden="true">×</span>
                     </button>
                   </div>
                 ) : (
@@ -2777,7 +2050,7 @@ export function MainWindow({
                     onClick={() => setDeleteConfirm(true)}
                     disabled={!selectedId}
                     className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-red-400 hover:bg-danger-bg transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                    title={t("noteMenu.delete", { defaultValue: "删除笔记" })}
+                    title={t("noteMenu.delete", { defaultValue: "删除便签" })}
                   >
                     <svg
                       width="13"
@@ -2796,16 +2069,31 @@ export function MainWindow({
                 )}
               </div>
 
-              <SlidingButtonGroup
-                options={viewModeOptions}
-                value={viewMode}
-                onChange={setViewMode}
-                buttonClassName="px-3 py-1"
-              />
+              <span
+                className="w-7 h-7 mr-1 flex items-center justify-center rounded-lg text-bamboo/65"
+                title={t("main.editor.quickMemo", { defaultValue: "快捷便签" })}
+                aria-label={t("main.editor.quickMemo", { defaultValue: "快捷便签" })}
+                role="img"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M6 3h12a2 2 0 0 1 2 2v11l-5 5H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+                  <path d="M15 21v-5h5M8 8h8M8 12h5" />
+                </svg>
+              </span>
             </div>
 
             <div
-              key={noteTransitionKey}
+              key={`note-header-${noteTransitionKey}`}
               className="animate-note-enter px-6 pt-4 pb-2 shrink-0 border-b border-paper-deep/15"
             >
               <input
@@ -2818,23 +2106,20 @@ export function MainWindow({
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    contentRef.current?.focus();
+                    memoEditorRef.current?.focus();
                   }
                 }}
-                placeholder={t("common.untitledNote", { defaultValue: "无标题笔记" })}
+                placeholder={t("main.editor.memoTitlePlaceholder", {
+                  defaultValue: "便签标题（可选）",
+                })}
                 disabled={!selectedId}
-                className="w-full text-[20px] font-display font-bold text-ink placeholder:text-ink-ghost/50 tracking-wide disabled:opacity-60"
+                className="w-full text-[20px] font-display font-bold text-bamboo placeholder:text-ink-ghost/50 tracking-wide disabled:opacity-60"
               />
               <div className="flex items-center gap-3 mt-1.5">
                 <span className="text-[10px] text-ink-ghost font-mono tabular-nums truncate max-w-[200px]">
-                  {selectedExternalFile
-                    ? t("main.externalFile.label", {
-                        path: selectedExternalFile.filePath,
-                        defaultValue: "外部文件 · {{path}}",
-                      })
-                    : selectedNote
-                      ? `${formatShortDate(selectedNote.updatedAt)} ${formatTime(selectedNote.updatedAt)}`
-                      : "--"}
+                  {selectedNote
+                    ? `${formatShortDate(selectedNote.updatedAt)} ${formatTime(selectedNote.updatedAt)}`
+                    : "--"}
                 </span>
                 <span className="text-[10px] text-ink-ghost/40">·</span>
                 <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
@@ -2857,140 +2142,64 @@ export function MainWindow({
             </div>
 
             <div
-              key={viewMode}
-              ref={splitContainerRef}
+              key={`note-editor-${noteTransitionKey}`}
               className="flex-1 flex min-h-0 animate-view-fade"
             >
               {!selectedId && !isLoading ? (
                 <div className="flex-1 flex items-center justify-center text-[13px] text-ink-ghost">
-                  {t("main.editor.emptyHint", { defaultValue: "选择或新建一篇笔记" })}
+                  {t("main.editor.emptyHint", { defaultValue: "选择或新建一张便签" })}
                 </div>
               ) : (
-                <>
-                  {(viewMode === "edit" || viewMode === "split") && (
-                    <div
-                      className="flex flex-col min-h-0 shrink-0"
-                      style={{ width: viewMode === "split" ? `${splitRatio * 100}%` : "100%" }}
-                    >
-                      <div className="flex items-center gap-0.5 px-4 pt-2 pb-1 shrink-0">
-                        {toolbarButtons.map((button) => (
-                          <button
-                            key={button.label}
-                            title={button.title}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => {
-                              if (contentRef.current) {
-                                applyMarkdownFormat({
-                                  textarea: contentRef.current,
-                                  action: button.action,
-                                  translate: t,
-                                  setContent,
-                                  markDirty,
-                                });
-                              }
-                            }}
-                            className={`w-6 h-6 flex items-center justify-center rounded text-[11px] text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer ${button.style}`}
-                          >
-                            {button.label}
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="flex-1 overflow-hidden px-5 pb-4">
-                        <textarea
-                          ref={contentRef}
-                          data-tab-indent="true"
-                          value={content}
-                          onChange={(event) => {
-                            setContent(event.target.value);
-                            markDirty();
-                          }}
-                          onPaste={imagePasteHandler}
-                          onDrop={imageDropHandler}
-                          onDragOver={imageDragOverHandler}
-                          onScroll={handleEditorScroll}
-                          className="w-full h-full leading-[1.9] text-ink-soft font-body placeholder:text-ink-ghost/40"
-                          style={{
-                            fontSize: `${settingsConfig?.fontSize ?? 14}px`,
-                            fontFamily: noteFontFamily,
-                            tabSize: `var(--tab-indent-size, 2)`,
-                          }}
-                          placeholder={t("main.editor.contentPlaceholder", {
-                            defaultValue: "开始写作……",
-                          })}
-                          spellCheck={false}
-                          disabled={!selectedId}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {viewMode === "split" && (
-                    <div
-                      className={`w-1.5 shrink-0 cursor-col-resize group relative flex items-center justify-center ${isResizingSplit ? "bg-bamboo/30" : "hover:bg-bamboo/20"} transition-colors`}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        setIsResizingSplit(true);
-                      }}
-                    >
-                      <div
-                        className={`absolute inset-y-0 -left-1.5 -right-1.5 ${isResizingSplit ? "" : "group-hover:bg-bamboo/5"}`}
-                      />
-                      {/* 拖拽手柄指示器 */}
-                      <div className="relative z-10 flex flex-col gap-[3px] opacity-0 group-hover:opacity-100 transition-opacity">
-                        <div className="w-[3px] h-[3px] rounded-full bg-ink-ghost/60" />
-                        <div className="w-[3px] h-[3px] rounded-full bg-ink-ghost/60" />
-                        <div className="w-[3px] h-[3px] rounded-full bg-ink-ghost/60" />
-                      </div>
-                    </div>
-                  )}
-
-                  {(viewMode === "preview" || viewMode === "split") && (
-                    <div className="flex flex-col min-h-0 min-w-0 flex-1">
-                      {viewMode === "split" && (
-                        <div className="px-4 pt-2.5 pb-1 shrink-0">
-                          <span className="text-[10px] text-ink-ghost/60 font-mono tracking-widest uppercase">
-                            {t("main.editor.previewLabel", { defaultValue: "Preview" })}
-                          </span>
-                        </div>
-                      )}
-                      <div
-                        ref={previewScrollRef}
-                        onScroll={handlePreviewScroll}
-                        className={`flex-1 overflow-y-auto px-6 pb-6 ${
-                          viewMode === "preview" ? "pt-3" : "pt-1"
-                        }`}
-                      >
-                        <MarkdownPreview
-                          content={content}
-                          fontSize={settingsConfig?.fontSize ?? 14}
-                          renderHtml={settingsConfig?.renderHtmlMarkdown ?? false}
-                          imageBaseDir={imageBaseDir ?? undefined}
-                          fontFamily={noteFontFamily}
-                          pendingImages={pendingImageUrls}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </>
+                <div className="flex-1 min-h-0 px-6 pt-3 pb-2">
+                  <MemoEditor
+                    ref={memoEditorRef}
+                    value={content}
+                    onChange={(nextContent) => {
+                      contentValueRef.current = nextContent;
+                      setContent(nextContent);
+                    }}
+                    onDirty={markDirty}
+                    onAddPendingImages={addPendingImages}
+                    onRemovePendingImage={(tempId) => {
+                      const image = pendingImagesRef.current[tempId];
+                      if (image) revokePendingImages([image]);
+                      setPendingImages((current) => {
+                        const next = { ...current };
+                        delete next[tempId];
+                        pendingImagesRef.current = next;
+                        return next;
+                      });
+                    }}
+                    pendingImages={pendingImageUrls}
+                    imageBaseDir={imageBaseDir ?? undefined}
+                    fontSize={settingsConfig?.fontSize ?? 14}
+                    fontFamily={noteFontFamily}
+                    placeholder={t("main.editor.memoPlaceholder", {
+                      defaultValue: "记录此刻要记住的事……",
+                    })}
+                    disabled={!selectedId}
+                    showToolbar={false}
+                    onError={showToast}
+                  />
+                </div>
               )}
             </div>
 
             <div className="flex items-center justify-between px-4 h-7 border-t border-paper-deep/20 bg-paper/30 shrink-0">
               <div className="flex items-center gap-3">
                 <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
-                  {t("main.statusBar.lineNumber", {
+                  {t("main.statusBar.blockCount", {
                     count: lineCount,
-                    defaultValue: "Ln {{count}}",
+                    defaultValue: "{{count}} 个内容块",
                   })}
                 </span>
                 <span className="text-[10px] text-ink-ghost/40">|</span>
                 <span className="text-[10px] text-ink-ghost font-mono">
-                  {t("main.statusBar.format", { defaultValue: "Markdown + LaTeX" })}
+                  {t("main.statusBar.memoFormat", { defaultValue: "快捷便签" })}
                 </span>
               </div>
               <div className="flex items-center gap-3">
-                {selectedId && !isExternal && content.includes("images/") && (
+                {selectedId && content.includes("images/") && (
                   <>
                     <button
                       type="button"
@@ -3003,11 +2212,7 @@ export function MainWindow({
                   </>
                 )}
                 <span className="text-[10px] text-ink-ghost font-mono">
-                  {t("main.statusBar.encoding", { defaultValue: "UTF-8" })}
-                </span>
-                <span className="text-[10px] text-ink-ghost/40">|</span>
-                <span className="text-[10px] text-ink-ghost font-mono tabular-nums">
-                  {t("main.statusBar.byteSize", { size: byteSize, defaultValue: "{{size}} KB" })}
+                  {t("main.statusBar.localMemo", { defaultValue: "本地便签" })}
                 </span>
               </div>
             </div>

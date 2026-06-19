@@ -1,13 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import {
-  checkGlobalShortcut,
-  chooseDataDirectory,
-  getConfig,
-  normalizeViewMode,
-  saveConfig,
-} from "./api";
+import { checkGlobalShortcut, chooseDataDirectory, getConfig, saveConfig } from "./api";
 import type { AppConfig } from "./types";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -37,12 +31,13 @@ describe("settings api", () => {
       defaultViewMode: "split",
       noteAutoSave: true,
       noteSurfaceAutoSave: true,
-      tileColor: "#f6f3ec",
+      tileColor: "#fdf6e3",
       tileColorMode: "system",
       theme: "light",
       fontSize: 14,
       surfaceFontSize: 14,
       noteFontFamily: "system",
+      customFonts: [],
       tabIndentSize: 2,
       externalFileAutoSave: true,
       rememberSurfaceSize: true,
@@ -76,6 +71,7 @@ describe("settings api", () => {
       fontSize: 16,
       surfaceFontSize: 16,
       noteFontFamily: "system",
+      customFonts: [],
       tabIndentSize: 4,
       externalFileAutoSave: true,
       rememberSurfaceSize: true,
@@ -106,13 +102,6 @@ describe("settings api", () => {
     expect(invoke).toHaveBeenCalledWith("global_shortcut_check", {
       shortcut: "Command+Space",
     });
-  });
-
-  test("normalizes supported view modes and falls back to split", () => {
-    expect(normalizeViewMode("edit")).toBe("edit");
-    expect(normalizeViewMode("split")).toBe("split");
-    expect(normalizeViewMode("preview")).toBe("preview");
-    expect(normalizeViewMode("unknown")).toBe("split");
   });
 
   test("chooses a data directory through the folder picker", async () => {

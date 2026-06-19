@@ -1,17 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { getConfig } from "../features/settings/api";
-import type { AppConfig } from "../features/settings/types";
-import { requestSurfaceAction } from "../features/windows/surfaceActions";
-import { getTileContextMenuItems } from "../features/windows/tileContextMenu";
 
 interface MenuState {
   x: number;
   y: number;
   hasSelection: boolean;
-  type: "edit" | "tile";
 }
 
 const textareaSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
@@ -25,41 +19,20 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
   const editableTargetRef = useRef<HTMLInputElement | HTMLTextAreaElement | HTMLElement | null>(
     null,
   );
-  const tileCtrlCloseRef = useRef(true);
-  const tileContextMenuItems = useMemo(() => getTileContextMenuItems(t), [t]);
-
-  useEffect(() => {
-    getConfig()
-      .then((c) => {
-        tileCtrlCloseRef.current = c.tileCtrlClose ?? true;
-      })
-      .catch(() => {});
-    const unlisten = listen<AppConfig>("config-changed", (event) => {
-      tileCtrlCloseRef.current = event.payload.tileCtrlClose ?? true;
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
 
   useEffect(() => {
     function handleContextMenu(event: MouseEvent) {
       const target = event.target as HTMLElement;
       const isEditable =
         target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable;
-      const tileTarget = target.closest<HTMLElement>('[data-context-menu="tile"]');
 
-      if (!isEditable && !tileTarget) {
+      if (!isEditable) {
         event.preventDefault();
         return;
       }
 
       event.preventDefault();
 
-      if (tileTarget && event.ctrlKey && tileCtrlCloseRef.current) {
-        requestSurfaceAction("close");
-        return;
-      }
       let selection = window.getSelection()?.toString() || "";
       if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
         selection = target.value.slice(target.selectionStart ?? 0, target.selectionEnd ?? 0);
@@ -68,25 +41,13 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
       let x = event.clientX;
       let y = event.clientY;
       const menuWidth = 160;
-      const menuHeight = tileTarget ? 150 : 170;
+      const menuHeight = 170;
       if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 4;
       if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 4;
 
-      if (tileTarget) {
-        editableTargetRef.current = null;
-        setMenuClosing(false);
-        setMenu({
-          x,
-          y,
-          hasSelection: false,
-          type: "tile",
-        });
-        return;
-      }
-
       editableTargetRef.current = target;
       setMenuClosing(false);
-      setMenu({ x, y, hasSelection: selection.length > 0, type: "edit" });
+      setMenu({ x, y, hasSelection: selection.length > 0 });
     }
 
     function handleClick() {
@@ -167,50 +128,38 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
     dismissMenu();
   };
 
-  const runSurfaceAction = (action: (typeof tileContextMenuItems)[number]["action"]) => {
-    requestSurfaceAction(action);
-    dismissMenu();
-  };
-
   const items = useMemo(
     () =>
       menu
-        ? menu.type === "tile"
-          ? tileContextMenuItems.map((item) => ({
-              ...item,
-              shortcut: "",
-              action: () => runSurfaceAction(item.action),
+        ? [
+            {
+              label: t("contextMenu.edit.cut", { defaultValue: "剪切" }),
+              shortcut: "Ctrl+X",
+              action: () => runCommand("cut"),
+              disabled: !menu.hasSelection,
+            },
+            {
+              label: t("contextMenu.edit.copy", { defaultValue: "复制" }),
+              shortcut: "Ctrl+C",
+              action: () => runCommand("copy"),
+              disabled: !menu.hasSelection,
+            },
+            {
+              label: t("contextMenu.edit.paste", { defaultValue: "粘贴" }),
+              shortcut: "Ctrl+V",
+              action: () => runCommand("paste"),
               disabled: false,
-            }))
-          : [
-              {
-                label: t("contextMenu.edit.cut", { defaultValue: "剪切" }),
-                shortcut: "Ctrl+X",
-                action: () => runCommand("cut"),
-                disabled: !menu.hasSelection,
-              },
-              {
-                label: t("contextMenu.edit.copy", { defaultValue: "复制" }),
-                shortcut: "Ctrl+C",
-                action: () => runCommand("copy"),
-                disabled: !menu.hasSelection,
-              },
-              {
-                label: t("contextMenu.edit.paste", { defaultValue: "粘贴" }),
-                shortcut: "Ctrl+V",
-                action: () => runCommand("paste"),
-                disabled: false,
-              },
-              { separator: true as const },
-              {
-                label: t("contextMenu.edit.selectAll", { defaultValue: "全选" }),
-                shortcut: "Ctrl+A",
-                action: () => runCommand("selectAll"),
-                disabled: false,
-              },
-            ]
+            },
+            { separator: true as const },
+            {
+              label: t("contextMenu.edit.selectAll", { defaultValue: "全选" }),
+              shortcut: "Ctrl+A",
+              action: () => runCommand("selectAll"),
+              disabled: false,
+            },
+          ]
         : [],
-    [menu, runCommand, t, tileContextMenuItems],
+    [menu, runCommand, t],
   );
 
   return (
@@ -234,11 +183,7 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
                 key={item.label}
                 onClick={() => void item.action()}
                 disabled={item.disabled}
-                className={`w-full flex items-center justify-between px-3 py-1.5 text-[12px] font-body transition-colors cursor-pointer disabled:text-ink-ghost/40 disabled:cursor-default disabled:hover:bg-transparent ${
-                  "tone" in item && item.tone === "danger"
-                    ? "text-red-400 hover:bg-danger-bg hover:text-red-500"
-                    : "text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo"
-                }`}
+                className="w-full flex items-center justify-between px-3 py-1.5 text-[12px] font-body transition-colors cursor-pointer disabled:text-ink-ghost/40 disabled:cursor-default disabled:hover:bg-transparent text-ink-soft hover:bg-bamboo-mist/60 hover:text-bamboo"
               >
                 <span>{item.label}</span>
                 {item.shortcut && (
