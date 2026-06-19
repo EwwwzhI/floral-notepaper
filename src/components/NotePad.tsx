@@ -13,7 +13,8 @@ import {
 } from "../features/images/pendingImages";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
 import { showToast } from "./Toast";
-import type { Note, NoteMetadata } from "../features/notes/types";
+import type { Note, NoteMetadata, NotesChangedEvent } from "../features/notes/types";
+import { shouldReloadOpenNote } from "../features/notes/sync";
 import { countNoteChars, metadataFromNote } from "../features/notes/noteUtils";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -58,7 +59,7 @@ import { Tile } from "./Tile";
 
 type OpenMode = "new" | "open";
 type PadDocumentKind = "scratch" | "existing";
-type NotePadStatus = "empty" | "opened" | "saved" | "dirty" | "saveFailed";
+type NotePadStatus = "empty" | "opened" | "saving" | "saved" | "dirty" | "saveFailed";
 
 interface NotePadProps {
   initialNoteId?: string;
@@ -114,6 +115,26 @@ function SurfaceResizeHandles() {
   );
 }
 
+function AlwaysOnTopIcon({ active, size = 16 }: { active: boolean; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={active ? 2.7 : 2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 4.5h16" />
+      <path d="M12 19.5V8" />
+      <path d="m6.5 13.5 5.5-5.5 5.5 5.5" />
+    </svg>
+  );
+}
+
 export function NotePad({
   initialNoteId,
   initialSurfaceMode = "pad",
@@ -150,6 +171,18 @@ export function NotePad({
   contentValueRef.current = content;
   const titleValueRef = useRef(title);
   titleValueRef.current = title;
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const editingNoteIdRef = useRef(editingNoteId);
+  editingNoteIdRef.current = editingNoteId;
+  const loadedUpdatedAtRef = useRef<string | null>(null);
+  const currentWindowLabel = useMemo(() => {
+    try {
+      return getCurrentWindow().label;
+    } catch {
+      return "notepad";
+    }
+  }, []);
   const isStandby = useRef(
     typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("standby") === "1",
@@ -162,6 +195,7 @@ export function NotePad({
     () => ({
       empty: t("notepad.status.empty", { defaultValue: "空" }),
       opened: t("notepad.status.opened", { defaultValue: "已打开" }),
+      saving: t("notepad.status.saving", { defaultValue: "保存中" }),
       saved: t("notepad.status.saved", { defaultValue: "已保存" }),
       dirty: t("notepad.status.unsaved", { defaultValue: "未保存" }),
       saveFailed: t("notepad.status.saveFailed", { defaultValue: "保存失败" }),
@@ -183,15 +217,22 @@ export function NotePad({
   }, []);
 
   const applyNote = useCallback((note: Note, kind: PadDocumentKind = "existing") => {
-    setEditingNoteId(kind === "existing" ? note.id : null);
+    const nextEditingNoteId = kind === "existing" ? note.id : null;
+    const memoContent = serializeMemoDocument(parseMemoContent(note.content));
+    editingNoteIdRef.current = nextEditingNoteId;
+    loadedUpdatedAtRef.current = kind === "existing" ? note.updatedAt : null;
+    titleValueRef.current = note.title;
+    contentValueRef.current = memoContent;
+    setEditingNoteId(nextEditingNoteId);
     setScratchSourceNoteId(kind === "scratch" ? note.id : null);
     setDocumentKind(kind);
     setTitle(note.title);
-    setContent(serializeMemoDocument(parseMemoContent(note.content)));
+    setContent(memoContent);
     revokePendingImages(Object.values(pendingImagesRef.current));
     pendingImagesRef.current = {};
     setPendingImages({});
     setMode("new");
+    statusRef.current = "opened";
     setStatus("opened");
   }, []);
 
@@ -228,13 +269,37 @@ export function NotePad({
   }, [applyNote, initialNoteId, refreshNotes]);
 
   useEffect(() => {
-    const unlisten = listen("notes-changed", () => {
+    const unlisten = listen<NotesChangedEvent | null>("notes-changed", (event) => {
       void refreshNotes().catch(() => undefined);
+      const currentNoteId = editingNoteIdRef.current;
+      const hasLocalChanges =
+        statusRef.current === "dirty" ||
+        statusRef.current === "saving" ||
+        statusRef.current === "saveFailed";
+      if (
+        !shouldReloadOpenNote(event.payload, currentNoteId, currentWindowLabel, hasLocalChanges)
+      ) {
+        return;
+      }
+
+      void getNote(currentNoteId as string)
+        .then((note) => {
+          if (editingNoteIdRef.current !== note.id) return;
+          if (
+            statusRef.current === "dirty" ||
+            statusRef.current === "saving" ||
+            statusRef.current === "saveFailed"
+          ) {
+            return;
+          }
+          applyNote(note);
+        })
+        .catch(() => undefined);
     });
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [refreshNotes]);
+  }, [applyNote, currentWindowLabel, refreshNotes]);
 
   useEffect(() => {
     if (isStandby.current) return;
@@ -296,6 +361,9 @@ export function NotePad({
 
       isStandby.current = false;
       hasEnteredOnce.current = true;
+      editingNoteIdRef.current = null;
+      loadedUpdatedAtRef.current = null;
+      statusRef.current = "empty";
       setEditingNoteId(null);
       setScratchSourceNoteId(null);
       setDocumentKind("scratch");
@@ -324,14 +392,21 @@ export function NotePad({
   const saveNote = useCallback(async () => {
     const titleSnapshot = title;
     const contentSnapshot = content;
+    const expectedUpdatedAt = loadedUpdatedAtRef.current;
     const existingCategory = notes.find((n) => n.id === editingNoteId)?.category ?? "";
+    statusRef.current = "saving";
+    setStatus("saving");
     let note =
       editingNoteId && documentKind === "existing"
-        ? await updateNote(editingNoteId, {
-            title: titleSnapshot,
-            content: contentSnapshot,
-            category: existingCategory,
-          })
+        ? await updateNote(
+            editingNoteId,
+            {
+              title: titleSnapshot,
+              content: contentSnapshot,
+              category: existingCategory,
+            },
+            expectedUpdatedAt,
+          )
         : await createNote({
             title: titleSnapshot,
             content: contentSnapshot,
@@ -352,11 +427,15 @@ export function NotePad({
       if (Object.keys(replacements).length > 0) {
         const persistedContent = replacePendingImageRefs(note.content, replacements);
         savedContent = persistedContent;
-        note = await updateNote(note.id, {
-          title: titleSnapshot,
-          content: persistedContent,
-          category: existingCategory,
-        });
+        note = await updateNote(
+          note.id,
+          {
+            title: titleSnapshot,
+            content: persistedContent,
+            category: existingCategory,
+          },
+          note.updatedAt,
+        );
         const currentContent = replacePendingImageRefs(contentValueRef.current, replacements);
         contentValueRef.current = currentContent;
         setContent(currentContent);
@@ -370,6 +449,8 @@ export function NotePad({
       }
     }
 
+    editingNoteIdRef.current = note.id;
+    loadedUpdatedAtRef.current = note.updatedAt;
     setEditingNoteId(note.id);
     setDocumentKind("existing");
     setScratchSourceNoteId(null);
@@ -383,7 +464,9 @@ export function NotePad({
     });
     const contentChanged =
       contentValueRef.current !== savedContent || titleValueRef.current !== titleSnapshot;
-    setStatus(contentChanged ? "dirty" : "saved");
+    const nextStatus = contentChanged ? "dirty" : "saved";
+    statusRef.current = nextStatus;
+    setStatus(nextStatus);
     return note;
   }, [content, documentKind, editingNoteId, title, notes]);
 
@@ -449,6 +532,7 @@ export function NotePad({
     try {
       await saveNote();
     } catch (error) {
+      statusRef.current = "saveFailed";
       setStatus("saveFailed");
       showToast(getErrorMessage(error));
     }
@@ -488,6 +572,8 @@ export function NotePad({
       }
       await switchSurfaceMode("tile");
     } catch (error) {
+      statusRef.current = "saveFailed";
+      setStatus("saveFailed");
       showToast(getErrorMessage(error));
     }
   };
@@ -526,6 +612,8 @@ export function NotePad({
   };
 
   const resetDraft = () => {
+    editingNoteIdRef.current = null;
+    loadedUpdatedAtRef.current = null;
     setEditingNoteId(null);
     setDocumentKind("scratch");
     setScratchSourceNoteId(null);
@@ -535,8 +623,14 @@ export function NotePad({
     pendingImagesRef.current = {};
     setPendingImages({});
     setMode("new");
+    statusRef.current = "empty";
     setStatus("empty");
   };
+
+  const markDirty = useCallback(() => {
+    statusRef.current = "dirty";
+    setStatus("dirty");
+  }, []);
 
   const isTile = surfaceMode === "tile";
   const tileTitle = title.trim();
@@ -558,7 +652,7 @@ export function NotePad({
           pendingImages={pendingImageUrls}
           onContentChange={(nextContent) => {
             setContent(nextContent);
-            setStatus("dirty");
+            markDirty();
           }}
           width="100%"
           className="h-full cursor-default"
@@ -588,21 +682,7 @@ export function NotePad({
                   : "text-ink-ghost/70 hover:text-bamboo hover:bg-bamboo-mist/80"
               }`}
             >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <rect x="4" y="8" width="13" height="11" rx="2" />
-                <path d="M8 5h11a2 2 0 0 1 2 2v8" />
-                <path d="M10.5 14 13 11.5 15.5 14" />
-                <path d="M13 11.5V17" />
-              </svg>
+              <AlwaysOnTopIcon active={surfaceAlwaysOnTop} size={15} />
             </button>
             <button
               type="button"
@@ -706,21 +786,7 @@ export function NotePad({
                       : "text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist/50"
                   }`}
                 >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="4" y="8" width="13" height="11" rx="2" />
-                    <path d="M8 5h11a2 2 0 0 1 2 2v8" />
-                    <path d="M10.5 14 13 11.5 15.5 14" />
-                    <path d="M13 11.5V17" />
-                  </svg>
+                  <AlwaysOnTopIcon active={surfaceAlwaysOnTop} />
                 </button>
                 <button
                   onClick={() => void handlePin()}
@@ -775,7 +841,7 @@ export function NotePad({
                   value={title}
                   onChange={(event) => {
                     setTitle(event.target.value);
-                    setStatus("dirty");
+                    markDirty();
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === "ArrowDown") {
@@ -792,7 +858,7 @@ export function NotePad({
                   ref={memoEditorRef}
                   value={content}
                   onChange={setContent}
-                  onDirty={() => setStatus("dirty")}
+                  onDirty={markDirty}
                   onAddPendingImages={addPendingImages}
                   onRemovePendingImage={(tempId) => {
                     const image = pendingImagesRef.current[tempId];

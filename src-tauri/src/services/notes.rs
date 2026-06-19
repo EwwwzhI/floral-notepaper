@@ -5,6 +5,7 @@ use std::{
     collections::BTreeMap,
     env, fmt, fs, io,
     path::{Component, Path, PathBuf},
+    sync::Mutex,
 };
 use uuid::Uuid;
 
@@ -21,14 +22,7 @@ const LEGACY_MACOS_GLOBAL_SHORTCUTS: [&str; 5] = [
 const MACOS_SHORTCUT_MIGRATION_MARKER: &str = ".macos-shortcut-default-v3";
 const DEFAULT_NOTE_FONT_FAMILY: &str = "system";
 const MEMO_CONTENT_PREFIX: &str = "FLORAL_MEMO_V1\n";
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct CustomFont {
-    pub id: String,
-    pub name: String,
-    pub file_name: String,
-}
+static NOTE_UPDATE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -69,8 +63,7 @@ pub struct AppConfig {
     pub surface_font_size: u32,
     #[serde(default = "default_note_font_family")]
     pub note_font_family: String,
-    #[serde(default)]
-    pub custom_fonts: Vec<CustomFont>,
+
     #[serde(default = "default_tab_indent_size")]
     pub tab_indent_size: u32,
     #[serde(default = "default_external_file_auto_save")]
@@ -661,7 +654,7 @@ impl NoteStore {
         self.migrate_data_dir_if_relocated(&mut config);
         config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
         config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
-        normalize_note_font_config(&mut config);
+        normalize_note_font_family(&mut config);
         write_json_atomic(&path, &config)?;
         fs::create_dir_all(self.data_dir.join("notes"))?;
         if self.migrate_macos_shortcut_default(&mut config)? {
@@ -674,7 +667,7 @@ impl NoteStore {
         self.ensure_config_dir()?;
         config.data_dir = Some(self.data_dir.to_string_lossy().to_string());
         config.tab_indent_size = config.tab_indent_size.clamp(1, 8);
-        normalize_note_font_config(&mut config);
+        normalize_note_font_family(&mut config);
         is_safe_data_dir(&self.data_dir)?;
         fs::create_dir_all(self.data_dir.join("notes"))?;
         write_json_atomic(&self.config_path(), &config)?;
@@ -750,13 +743,32 @@ impl NoteStore {
     }
 
     pub fn update_note(&self, id: &str, request: SaveNoteRequest) -> Result<Note, AppError> {
+        self.update_note_if_unmodified(id, request, None)
+    }
+
+    pub fn update_note_if_unmodified(
+        &self,
+        id: &str,
+        request: SaveNoteRequest,
+        expected_updated_at: Option<DateTime<Utc>>,
+    ) -> Result<Note, AppError> {
         self.ensure_storage()?;
+        let _update_guard = NOTE_UPDATE_LOCK
+            .lock()
+            .map_err(|_| AppError::new("noteUpdateLock", "便签保存锁不可用，请稍后重试"))?;
         let mut metadata_file = self.load_metadata()?;
         let note = metadata_file
             .notes
             .iter_mut()
             .find(|note| note.id == id)
             .ok_or_else(|| AppError::note_not_found(id))?;
+
+        if expected_updated_at.is_some_and(|expected| note.updated_at != expected) {
+            return Err(AppError::new(
+                "noteConflict",
+                "该便签已在其他窗口更新，请重新打开后再编辑",
+            ));
+        }
 
         let old_file_name = note.file_name.clone();
         let old_category = note.category.clone();
@@ -1171,7 +1183,6 @@ impl NoteStore {
             font_size: default_font_size(),
             surface_font_size: default_surface_font_size(),
             note_font_family: default_note_font_family(),
-            custom_fonts: Vec::new(),
             tab_indent_size: default_tab_indent_size(),
             external_file_auto_save: default_external_file_auto_save(),
             background_image_path: String::new(),
@@ -1238,7 +1249,7 @@ impl NoteStore {
 
             config.background_image_path =
                 remap_path_prefix(&config.background_image_path, old_dir, &resolved_data_dir);
-            normalize_note_font_config(&mut config);
+            normalize_note_font_family(&mut config);
             config.data_dir = Some(resolved_data_dir.to_string_lossy().to_string());
             config.notes_dir = None;
             config.last_known_base_dir = None;
@@ -1731,21 +1742,18 @@ fn memo_to_markdown(content: &str) -> Option<String> {
     Some(markdown)
 }
 
-fn memo_markdown_format(block: &serde_json::Value, text: &str) -> String {
-    let format = block.get("format");
-    let bold = format
-        .and_then(|value| value.get("bold"))
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let italic = format
-        .and_then(|value| value.get("italic"))
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let underline = format
-        .and_then(|value| value.get("underline"))
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
+fn memo_text_format(value: Option<&serde_json::Value>) -> (bool, bool, bool) {
+    let enabled = |key| {
+        value
+            .and_then(|format| format.get(key))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    };
+    (enabled("bold"), enabled("italic"), enabled("underline"))
+}
 
+fn apply_memo_markdown_format(text: &str, format: (bool, bool, bool)) -> String {
+    let (bold, italic, underline) = format;
     text.split('\n')
         .map(|line| {
             if line.is_empty() {
@@ -1764,6 +1772,62 @@ fn memo_markdown_format(block: &serde_json::Value, text: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn memo_markdown_format(block: &serde_json::Value, text: &str) -> String {
+    let base_format = memo_text_format(block.get("format"));
+    let Some(ranges) = block.get("formats").and_then(serde_json::Value::as_array) else {
+        return apply_memo_markdown_format(text, base_format);
+    };
+    if ranges.is_empty() {
+        return apply_memo_markdown_format(text, base_format);
+    }
+
+    let mut output = String::new();
+    let mut segment = String::new();
+    let mut segment_format: Option<(bool, bool, bool)> = None;
+    let mut utf16_offset = 0_u64;
+
+    for ch in text.chars() {
+        let mut format = base_format;
+        for range in ranges {
+            let start = range
+                .get("start")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let end = range
+                .get("end")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            if utf16_offset >= start && utf16_offset < end {
+                let range_format = memo_text_format(range.get("format"));
+                format = (
+                    format.0 || range_format.0,
+                    format.1 || range_format.1,
+                    format.2 || range_format.2,
+                );
+            }
+        }
+
+        if segment_format.is_some_and(|current| current != format) {
+            output.push_str(&apply_memo_markdown_format(
+                &segment,
+                segment_format.unwrap_or(base_format),
+            ));
+            segment.clear();
+        }
+        segment_format = Some(format);
+        segment.push(ch);
+        utf16_offset += ch.len_utf16() as u64;
+    }
+
+    if !segment.is_empty() {
+        output.push_str(&apply_memo_markdown_format(
+            &segment,
+            segment_format.unwrap_or(base_format),
+        ));
+    }
+    output
 }
 
 fn memo_markdown_link(block: &serde_json::Value, text: &str) -> String {
@@ -1900,9 +1964,7 @@ fn default_note_font_family() -> String {
     DEFAULT_NOTE_FONT_FAMILY.into()
 }
 
-fn normalize_note_font_config(config: &mut AppConfig) {
-    config.custom_fonts.clear();
-
+fn normalize_note_font_family(config: &mut AppConfig) {
     let is_system_default = config.note_font_family == "system";
     let is_system = config
         .note_font_family
@@ -2058,6 +2120,45 @@ mod tests {
     }
 
     #[test]
+    fn rejects_updates_based_on_a_stale_note_version() {
+        let store = test_store("note-conflict");
+        let created = store
+            .create_note(SaveNoteRequest {
+                title: "初始".into(),
+                content: "初始内容".into(),
+                category: String::new(),
+            })
+            .expect("create note");
+
+        let updated = store
+            .update_note_if_unmodified(
+                &created.id,
+                SaveNoteRequest {
+                    title: "窗口一".into(),
+                    content: "窗口一内容".into(),
+                    category: String::new(),
+                },
+                Some(created.updated_at),
+            )
+            .expect("first update");
+
+        let error = store
+            .update_note_if_unmodified(
+                &created.id,
+                SaveNoteRequest {
+                    title: "窗口二".into(),
+                    content: "窗口二内容".into(),
+                    category: String::new(),
+                },
+                Some(created.updated_at),
+            )
+            .expect_err("stale update must fail");
+
+        assert_eq!(error.code, "noteConflict");
+        assert_eq!(store.read_note(&created.id).expect("read current"), updated);
+    }
+
+    #[test]
     fn rebuilds_metadata_when_metadata_json_is_corrupt() {
         let store = test_store("repair");
         let first = store
@@ -2135,7 +2236,6 @@ mod tests {
             font_size: 16,
             surface_font_size: 16,
             note_font_family: "system".into(),
-            custom_fonts: Vec::new(),
             tab_indent_size: 2,
             external_file_auto_save: true,
             background_image_path: String::new(),
@@ -2675,6 +2775,32 @@ mod tests {
         assert_eq!(
             fs::read_to_string(export_path).expect("read exported markdown"),
             content
+        );
+    }
+
+    #[test]
+    fn exports_structured_memo_with_inline_format_ranges() {
+        let content = format!(
+            "{MEMO_CONTENT_PREFIX}{}",
+            serde_json::json!({
+                "version": 1,
+                "blocks": [{
+                    "id": "text",
+                    "type": "text",
+                    "text": "更新文档手册",
+                    "style": "body",
+                    "formats": [{
+                        "start": 2,
+                        "end": 4,
+                        "format": { "bold": true, "underline": true }
+                    }]
+                }]
+            })
+        );
+
+        assert_eq!(
+            memo_to_markdown(&content).as_deref(),
+            Some("更新<u>**文档**</u>手册")
         );
     }
 

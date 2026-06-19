@@ -174,6 +174,19 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
           />
         </section>
 
+        <section className="space-y-2">
+          <ToggleRow
+            label={t("settings.autoSave.note", { defaultValue: "主编辑区自动保存" })}
+            checked={config.noteAutoSave}
+            onChange={(checked) => setConfigValue("noteAutoSave", checked)}
+          />
+          <ToggleRow
+            label={t("settings.autoSave.surface", { defaultValue: "便签小窗自动保存" })}
+            checked={config.noteSurfaceAutoSave}
+            onChange={(checked) => setConfigValue("noteSurfaceAutoSave", checked)}
+          />
+        </section>
+
         <section className="space-y-3">
           <ShortcutField
             label={t("settings.quickNoteShortcut", { defaultValue: "快捷便签快捷键" })}

@@ -16,10 +16,13 @@ import {
   createEmptyMemoDocument,
   createMemoBlockId,
   findMemoTextLinks,
+  memoFormattedSegments,
   memoLinkFromPastedText,
   normalizeMemoLinkUrl,
   parseMemoContent,
   serializeMemoDocument,
+  toggleMemoTextFormat,
+  updateMemoBlockText,
   type MemoBlock,
   type MemoDocument,
   type MemoImageBlock,
@@ -97,6 +100,21 @@ function nextDocument(blocks: MemoBlock[]): MemoDocument {
   return blocks.length > 0 ? { version: 1, blocks } : createEmptyMemoDocument();
 }
 
+function renderFormattedSegments(block: MemoTextBlock | MemoTodoBlock) {
+  return memoFormattedSegments(block).map((segment) => (
+    <span
+      key={`${segment.start}-${segment.end}`}
+      style={{
+        fontWeight: segment.format.bold ? 700 : undefined,
+        fontStyle: segment.format.italic ? "italic" : undefined,
+        textDecoration: segment.format.underline ? "underline" : undefined,
+      }}
+    >
+      {segment.text}
+    </span>
+  ));
+}
+
 export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function MemoEditor(
   {
     value,
@@ -121,12 +139,14 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
   const documentRef = useRef(document);
   documentRef.current = document;
   const activeBlockIdRef = useRef(document.blocks[0]?.id ?? "");
+  const editorRootRef = useRef<HTMLDivElement>(null);
   const inputRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const undoStackRef = useRef<string[]>([]);
   const redoStackRef = useRef<string[]>([]);
   const lastEmittedRef = useRef<string | null>(null);
   const pendingFocusRef = useRef<string | null>(null);
+  const pendingSelectionRef = useRef<{ id: string; start: number; end: number } | null>(null);
 
   useEffect(() => {
     if (lastEmittedRef.current === value) return;
@@ -136,14 +156,18 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
   }, [document.blocks, value]);
 
   useEffect(() => {
-    const id = pendingFocusRef.current;
+    const selection = pendingSelectionRef.current;
+    const id = selection?.id ?? pendingFocusRef.current;
     if (!id) return;
+    pendingSelectionRef.current = null;
     pendingFocusRef.current = null;
     requestAnimationFrame(() => {
       const textarea = inputRefs.current.get(id);
       if (!textarea) return;
       textarea.focus();
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      const start = selection?.start ?? textarea.value.length;
+      const end = selection?.end ?? textarea.value.length;
+      textarea.setSelectionRange(start, end);
     });
   }, [value]);
 
@@ -171,21 +195,16 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
     );
   };
 
-  const insertBlocks = (blocks: MemoBlock[]) => {
+  const insertBlocksAfter = (anchorId: string, blocks: MemoBlock[]) => {
     const current = withoutEmptyPlaceholder(documentRef.current.blocks);
-    const activeIndex = current.findIndex((block) => block.id === activeBlockIdRef.current);
-    const insertionIndex = activeIndex >= 0 ? activeIndex + 1 : current.length;
+    const anchorIndex = current.findIndex((block) => block.id === anchorId);
+    const insertionIndex = anchorIndex >= 0 ? anchorIndex + 1 : current.length;
     const nextBlocks = [...current];
     nextBlocks.splice(insertionIndex, 0, ...blocks);
     pendingFocusRef.current =
-      blocks.find((block) => block.type === "text" || block.type === "todo")?.id ?? null;
+      [...blocks].reverse().find((block) => block.type === "text" || block.type === "todo")?.id ??
+      null;
     emitDocument(nextDocument(nextBlocks));
-  };
-
-  const addTodo = () => {
-    insertBlocks([
-      { id: createMemoBlockId(), type: "todo", text: "", checked: false } satisfies MemoTodoBlock,
-    ]);
   };
 
   const toggleActiveTodo = () => {
@@ -202,6 +221,7 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
             text: block.text,
             style: "body",
             format: block.format,
+            formats: block.formats,
             link: block.link,
           } satisfies MemoTextBlock)
         : ({
@@ -210,6 +230,7 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
             text: block.text,
             checked: false,
             format: block.format,
+            formats: block.formats,
             link: block.link,
           } satisfies MemoTodoBlock);
     });
@@ -221,17 +242,14 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
     const active = documentRef.current.blocks.find((block) => block.id === activeId);
     if (!active || active.type === "image") return;
 
+    const textarea = inputRefs.current.get(activeId);
+    const selectionStart = textarea?.selectionStart ?? 0;
+    const selectionEnd = textarea?.selectionEnd ?? 0;
     updateBlock(activeId, (block) => {
       if (block.type === "image") return block;
-      return {
-        ...block,
-        format: {
-          ...block.format,
-          [key]: !block.format?.[key],
-        },
-      };
+      return toggleMemoTextFormat(block, selectionStart, selectionEnd, key);
     });
-    pendingFocusRef.current = activeId;
+    pendingSelectionRef.current = { id: activeId, start: selectionStart, end: selectionEnd };
   };
 
   const openStoredLink = (value: string) => {
@@ -242,17 +260,36 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
   const insertImages = (images: PendingImage[]) => {
     if (images.length === 0) return;
     onAddPendingImages(images);
-    insertBlocks(
-      images.map(
-        (image) =>
-          ({
-            id: createMemoBlockId(),
-            type: "image",
-            src: `pending-image://${image.tempId}`,
-            alt: image.fileName,
-          }) satisfies MemoImageBlock,
-      ),
+    const imageBlocks = images.map(
+      (image) =>
+        ({
+          id: createMemoBlockId(),
+          type: "image",
+          src: `pending-image://${image.tempId}`,
+          alt: image.fileName,
+        }) satisfies MemoImageBlock,
     );
+    const trailingText = {
+      id: createMemoBlockId(),
+      type: "text",
+      text: "",
+      style: "body",
+    } satisfies MemoTextBlock;
+    const current = documentRef.current.blocks;
+    const activeIndex = current.findIndex((block) => block.id === activeBlockIdRef.current);
+    const active = current[activeIndex];
+    const shouldReplaceEmptyBlock =
+      activeIndex >= 0 && active && active.type !== "image" && active.text.length === 0;
+    const nextBlocks = [...current];
+    nextBlocks.splice(
+      shouldReplaceEmptyBlock ? activeIndex : activeIndex >= 0 ? activeIndex + 1 : current.length,
+      shouldReplaceEmptyBlock ? 1 : 0,
+      ...imageBlocks,
+      trailingText,
+    );
+    activeBlockIdRef.current = trailingText.id;
+    pendingFocusRef.current = trailingText.id;
+    emitDocument(nextDocument(nextBlocks));
   };
 
   const processFiles = async (files: File[]) => {
@@ -276,6 +313,21 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
       );
     }
   };
+  const processFilesRef = useRef(processFiles);
+  processFilesRef.current = processFiles;
+
+  useEffect(() => {
+    const root = editorRootRef.current as
+      | (HTMLDivElement & { floralPasteImages?: (files: File[]) => void })
+      | null;
+    if (!root) return;
+    root.floralPasteImages = (files) => {
+      if (!disabled && files.length > 0) void processFilesRef.current(files);
+    };
+    return () => {
+      delete root.floralPasteImages;
+    };
+  }, [disabled]);
 
   const removeBlock = (block: MemoBlock) => {
     const pendingImageId =
@@ -300,16 +352,195 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
     emitDocument(next, pendingImageId === null);
   };
 
-  const handleTodoKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, block: MemoTodoBlock) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      activeBlockIdRef.current = block.id;
-      addTodo();
+  const sliceFormatRanges = (block: MemoTextBlock | MemoTodoBlock, start: number, end: number) =>
+    block.formats
+      ?.map((range) => ({
+        start: Math.max(range.start, start) - start,
+        end: Math.min(range.end, end) - start,
+        format: range.format,
+      }))
+      .filter((range) => range.end > range.start);
+
+  const navigateBetweenBlocks = (
+    event: KeyboardEvent<HTMLTextAreaElement>,
+    block: MemoTextBlock | MemoTodoBlock,
+  ) => {
+    if (
+      !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key) ||
+      event.shiftKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      event.currentTarget.selectionStart !== event.currentTarget.selectionEnd
+    ) {
+      return false;
+    }
+
+    const caret = event.currentTarget.selectionStart;
+    const currentLineStart = block.text.lastIndexOf("\n", Math.max(0, caret - 1)) + 1;
+    const moveBackward =
+      (event.key === "ArrowLeft" && caret === 0) || (event.key === "ArrowUp" && caret === 0);
+    const moveForward =
+      (event.key === "ArrowRight" && caret === block.text.length) ||
+      (event.key === "ArrowDown" && caret === block.text.length);
+    if (!moveBackward && !moveForward) return false;
+
+    const blocks = documentRef.current.blocks;
+    const currentIndex = blocks.findIndex((current) => current.id === block.id);
+    const step = moveBackward ? -1 : 1;
+    let target: MemoTextBlock | MemoTodoBlock | undefined;
+    for (let index = currentIndex + step; index >= 0 && index < blocks.length; index += step) {
+      const candidate = blocks[index];
+      if (candidate.type !== "image") {
+        target = candidate;
+        break;
+      }
+    }
+    if (!target) return false;
+
+    let targetPosition = moveBackward ? target.text.length : 0;
+    if (event.key === "ArrowUp") {
+      const column = caret - currentLineStart;
+      const targetLineStart = target.text.lastIndexOf("\n") + 1;
+      targetPosition = Math.min(target.text.length, targetLineStart + column);
+    } else if (event.key === "ArrowDown") {
+      const column = caret - currentLineStart;
+      const targetLineEnd = target.text.indexOf("\n");
+      targetPosition = Math.min(targetLineEnd >= 0 ? targetLineEnd : target.text.length, column);
+    }
+
+    event.preventDefault();
+    activeBlockIdRef.current = target.id;
+    requestAnimationFrame(() => {
+      const textarea = inputRefs.current.get(target.id);
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(targetPosition, targetPosition);
+    });
+    return true;
+  };
+
+  const splitTextBlock = (
+    event: KeyboardEvent<HTMLTextAreaElement>,
+    block: MemoTextBlock | MemoTodoBlock,
+  ) => {
+    if (event.key !== "Enter" || event.shiftKey) return false;
+    event.preventDefault();
+    const start = event.currentTarget.selectionStart;
+    const end = event.currentTarget.selectionEnd;
+    const before = block.text.slice(0, start);
+    const after = block.text.slice(end);
+    const nextId = createMemoBlockId();
+    const nextBlock =
+      block.type === "todo"
+        ? ({
+            id: nextId,
+            type: "todo",
+            text: after,
+            checked: false,
+            format: block.format,
+            formats: sliceFormatRanges(block, end, block.text.length),
+          } satisfies MemoTodoBlock)
+        : ({
+            id: nextId,
+            type: "text",
+            text: after,
+            style: "body",
+            format: block.format,
+            formats: sliceFormatRanges(block, end, block.text.length),
+          } satisfies MemoTextBlock);
+    const blocks = documentRef.current.blocks.flatMap((current) =>
+      current.id === block.id
+        ? [
+            {
+              ...current,
+              text: before,
+              formats: sliceFormatRanges(block, 0, start),
+              link: undefined,
+            } as MemoBlock,
+            nextBlock,
+          ]
+        : [current],
+    );
+    activeBlockIdRef.current = nextId;
+    pendingFocusRef.current = nextId;
+    emitDocument(nextDocument(blocks));
+    return true;
+  };
+
+  const handleTextKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, block: MemoTextBlock) => {
+    if (navigateBetweenBlocks(event, block)) return;
+    if (splitTextBlock(event, block)) return;
+    if (
+      event.key !== "Backspace" ||
+      event.currentTarget.selectionStart !== 0 ||
+      event.currentTarget.selectionEnd !== 0
+    ) {
       return;
     }
-    if (event.key === "Backspace" && !block.text && documentRef.current.blocks.length > 1) {
+
+    const blockIndex = documentRef.current.blocks.findIndex((current) => current.id === block.id);
+    if (blockIndex <= 0) return;
+    const previous = documentRef.current.blocks[blockIndex - 1];
+    if (!block.text) {
       event.preventDefault();
       removeBlock(block);
+      return;
+    }
+    if (previous.type === "image") return;
+    event.preventDefault();
+
+    const joinPosition = previous.text.length;
+    const ranges = [
+      ...memoFormattedSegments(previous),
+      ...memoFormattedSegments(block).map((segment) => ({
+        ...segment,
+        start: segment.start + joinPosition,
+        end: segment.end + joinPosition,
+      })),
+    ]
+      .filter((segment) => segment.format.bold || segment.format.italic || segment.format.underline)
+      .map((segment) => ({
+        start: segment.start,
+        end: segment.end,
+        format: segment.format,
+      }));
+    const mergedBlock = {
+      ...previous,
+      text: previous.text + block.text,
+      format: undefined,
+      formats: ranges.length > 0 ? ranges : undefined,
+      link: undefined,
+    } satisfies MemoTextBlock | MemoTodoBlock;
+    const nextBlocks = documentRef.current.blocks
+      .filter((current) => current.id !== block.id)
+      .map((current) => (current.id === previous.id ? mergedBlock : current));
+    activeBlockIdRef.current = previous.id;
+    pendingSelectionRef.current = {
+      id: previous.id,
+      start: joinPosition,
+      end: joinPosition,
+    };
+    emitDocument(nextDocument(nextBlocks));
+  };
+
+  const handleTodoKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, block: MemoTodoBlock) => {
+    if (navigateBetweenBlocks(event, block)) return;
+    if (splitTextBlock(event, block)) return;
+    if (
+      event.key === "Backspace" &&
+      !block.text &&
+      event.currentTarget.selectionStart === 0 &&
+      event.currentTarget.selectionEnd === 0
+    ) {
+      event.preventDefault();
+      updateBlock(block.id, () => ({
+        id: block.id,
+        type: "text",
+        text: "",
+        style: "body",
+      }));
+      pendingFocusRef.current = block.id;
     }
   };
 
@@ -405,6 +636,7 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
 
   return (
     <div
+      ref={editorRootRef}
       className={`memo-editor ${compact ? "memo-editor-compact" : ""}`}
       onPaste={handlePaste}
       onDrop={handleDrop}
@@ -440,6 +672,35 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
               <figure
                 key={block.id}
                 className={`memo-image-block group ${src ? "" : "is-missing"}`}
+                tabIndex={disabled ? -1 : 0}
+                onFocus={() => {
+                  activeBlockIdRef.current = block.id;
+                }}
+                onClick={() => {
+                  activeBlockIdRef.current = block.id;
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.shiftKey || disabled) return;
+                  event.preventDefault();
+                  const imageIndex = documentRef.current.blocks.findIndex(
+                    (current) => current.id === block.id,
+                  );
+                  const followingBlock = documentRef.current.blocks[imageIndex + 1];
+                  if (followingBlock?.type === "text" && followingBlock.text.length === 0) {
+                    activeBlockIdRef.current = followingBlock.id;
+                    pendingFocusRef.current = followingBlock.id;
+                    requestAnimationFrame(() => inputRefs.current.get(followingBlock.id)?.focus());
+                    return;
+                  }
+                  const textBlock = {
+                    id: createMemoBlockId(),
+                    type: "text",
+                    text: "",
+                    style: "body",
+                  } satisfies MemoTextBlock;
+                  activeBlockIdRef.current = textBlock.id;
+                  insertBlocksAfter(block.id, [textBlock]);
+                }}
               >
                 {src ? (
                   <img src={src} alt={block.alt ?? ""} className="memo-image" draggable={false} />
@@ -501,6 +762,22 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
                     </svg>
                   )}
                 </button>
+                {block.formats && (
+                  <div
+                    className={`memo-format-overlay memo-todo-input ${block.checked ? "is-checked" : ""} ${styledLink ? "is-linked" : ""}`}
+                    style={{
+                      textDecoration: [
+                        block.checked ? "line-through" : "",
+                        styledLink ? "underline" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" "),
+                    }}
+                    aria-hidden="true"
+                  >
+                    {renderFormattedSegments(block)}
+                  </div>
+                )}
                 <textarea
                   ref={(element) => {
                     if (element) inputRefs.current.set(block.id, element);
@@ -512,10 +789,9 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
                     activeBlockIdRef.current = block.id;
                   }}
                   onChange={(event) =>
-                    updateBlock(block.id, (current) => ({
-                      ...(current as MemoTodoBlock),
-                      text: event.target.value,
-                    }))
+                    updateBlock(block.id, (current) =>
+                      updateMemoBlockText(current as MemoTodoBlock, event.target.value),
+                    )
                   }
                   onPaste={(event) => handleTextPaste(event, block)}
                   onKeyDown={(event) => handleTodoKeyDown(event, block)}
@@ -524,7 +800,7 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
                       ? t("memo.todoPlaceholder", { defaultValue: "待办事项" })
                       : undefined
                   }
-                  className={`memo-block-input memo-todo-input ${block.checked ? "is-checked" : ""} ${styledLink ? "is-linked" : ""}`}
+                  className={`memo-block-input memo-todo-input ${block.checked ? "is-checked" : ""} ${styledLink ? "is-linked" : ""} ${block.formats ? "has-inline-format" : ""}`}
                   title={detectedLink}
                   style={{
                     fontWeight: block.format?.bold ? 700 : undefined,
@@ -567,27 +843,42 @@ export const MemoEditor = forwardRef<MemoEditorHandle, MemoEditorProps>(function
           const styledLink = block.link ?? memoLinkFromPastedText(block.text);
           return (
             <div key={block.id} className={`memo-text-row group ${detectedLink ? "has-link" : ""}`}>
+              {block.formats && (
+                <div
+                  className={`memo-format-overlay memo-text-input ${
+                    block.style === "heading" ? "is-heading" : ""
+                  } ${styledLink ? "is-linked" : ""}`}
+                  style={{
+                    fontSize: `${block.style === "heading" ? fontSize + 2 : fontSize}px`,
+                    fontFamily,
+                    textDecoration: styledLink ? "underline" : undefined,
+                  }}
+                  aria-hidden="true"
+                >
+                  {renderFormattedSegments(block)}
+                </div>
+              )}
               <textarea
                 ref={(element) => {
                   if (element) inputRefs.current.set(block.id, element);
                   else inputRefs.current.delete(block.id);
                 }}
                 value={block.text}
-                rows={block.style === "heading" ? 1 : 3}
+                rows={1}
                 onFocus={() => {
                   activeBlockIdRef.current = block.id;
                 }}
                 onChange={(event) =>
-                  updateBlock(block.id, (current) => ({
-                    ...(current as MemoTextBlock),
-                    text: event.target.value,
-                  }))
+                  updateBlock(block.id, (current) =>
+                    updateMemoBlockText(current as MemoTextBlock, event.target.value),
+                  )
                 }
                 onPaste={(event) => handleTextPaste(event, block)}
+                onKeyDown={(event) => handleTextKeyDown(event, block)}
                 placeholder={index === 0 ? placeholder : undefined}
                 className={`memo-block-input memo-text-input ${
                   block.style === "heading" ? "is-heading" : ""
-                } ${styledLink ? "is-linked" : ""}`}
+                } ${styledLink ? "is-linked" : ""} ${block.formats ? "has-inline-format" : ""}`}
                 title={detectedLink}
                 style={{
                   fontSize: `${block.style === "heading" ? fontSize + 2 : fontSize}px`,

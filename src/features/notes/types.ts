@@ -19,6 +19,12 @@ export interface SaveNoteRequest {
   category: string;
 }
 
+export interface NotesChangedEvent {
+  noteId?: string | null;
+  updatedAt?: string | null;
+  sourceWindow?: string | null;
+}
+
 export interface ExternalFile {
   id: string;
   title: string;

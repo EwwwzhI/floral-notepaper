@@ -5,12 +5,6 @@ export type BackgroundFit = "cover" | "contain" | "repeat";
 
 export type NoteFontFamily = "system" | `system:${string}`;
 
-export interface CustomFont {
-  id: string;
-  name: string;
-  fileName: string;
-}
-
 export interface AppConfig {
   locale: string;
   dataDir: string;
@@ -26,7 +20,6 @@ export interface AppConfig {
   fontSize: number;
   surfaceFontSize: number;
   noteFontFamily: NoteFontFamily;
-  customFonts: CustomFont[];
   tabIndentSize: number;
   externalFileAutoSave: boolean;
   rememberSurfaceSize: boolean;

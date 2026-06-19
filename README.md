@@ -9,9 +9,9 @@
 轻量、现代的 Windows 本地便签工具<br>
 基于 Tauri 2 + React 构建
 
-[下载](https://github.com/Achilng/floral-notepaper/releases/latest) · [反馈问题](https://github.com/Achilng/floral-notepaper/issues) · [更新日志](https://github.com/Achilng/floral-notepaper/releases)
+[下载](https://github.com/EwwwzhI/floral-notepaper/releases/latest) · [反馈问题](https://github.com/EwwwzhI/floral-notepaper/issues) · [更新日志](https://github.com/EwwwzhI/floral-notepaper/releases)
 
-[![Version](https://img.shields.io/github/v/release/Achilng/floral-notepaper)](https://github.com/Achilng/floral-notepaper/releases/latest)
+[![Version](https://img.shields.io/github/v/release/EwwwzhI/floral-notepaper)](https://github.com/EwwwzhI/floral-notepaper/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
@@ -32,7 +32,7 @@
 
 ## 快捷便签与磁贴
 
-通过托盘或全局快捷键（默认 `Ctrl+Space`）打开快捷便签。
+通过托盘或全局快捷键（默认 `Ctrl+Shift+N`）打开快捷便签。
 
 ![小窗多开示例](Docs/images/小窗多开示例.gif)
 
@@ -43,11 +43,11 @@
 - **保存**：把修改写入花笺的数据目录，供应用继续管理和编辑。
 - **导出 Markdown**：将单篇便签另存为 `.md` 文件。图片会复制到同名 `_assets` 文件夹。
 
-数据目录存放便签、图片、自定义字体、背景和应用配置。完整备份或迁移时请复制整个数据目录，不建议直接修改内部文件。
+数据目录存放便签、图片、背景和应用配置。完整备份或迁移时请复制整个数据目录，不建议直接修改内部文件。
 
 ## 下载
 
-目前仅提供 Windows x64 版本，请前往 [GitHub Release](https://github.com/Achilng/floral-notepaper/releases/latest) 下载。
+目前仅提供 Windows x64 版本，请前往 [GitHub Release](https://github.com/EwwwzhI/floral-notepaper/releases/latest) 下载。
 
 | 类型   | Release 文件                            |
 | ------ | --------------------------------------- |

@@ -24,6 +24,7 @@
     "dialog:allow-save",
     "opener:default",
     "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-image",
     "clipboard-manager:allow-read-text"
   ]
 }

@@ -29,6 +29,15 @@ describe("notes api error localization", () => {
     ).toBe("快捷便签快捷键 配置无效");
   });
 
+  test("localizes note version conflicts", () => {
+    expect(
+      getErrorMessage({
+        code: "noteConflict",
+        message: "stale note version",
+      }),
+    ).toBe("该便签已在其他窗口更新，请重新打开后再编辑");
+  });
+
   test("parses serialized backend error strings when a structured payload is unavailable", () => {
     expect(getErrorMessage("noteNotFound: Note note-1 was not found")).toBe("找不到该便签");
   });

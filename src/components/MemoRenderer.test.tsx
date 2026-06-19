@@ -31,6 +31,28 @@ describe("MemoRenderer", () => {
     expect(markup).not.toContain("FLORAL_MEMO_V1");
   });
 
+  test("renders formatting only around the configured text range", () => {
+    const content = serializeMemoDocument({
+      version: 1,
+      blocks: [
+        {
+          id: "text",
+          type: "text",
+          text: "更新文档手册",
+          style: "body",
+          formats: [{ start: 2, end: 4, format: { bold: true, underline: true } }],
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(<MemoRenderer content={content} />);
+
+    expect(markup).toContain("更新");
+    expect(markup).toContain('style="font-weight:700;text-decoration:underline"');
+    expect(markup).toContain(">文档</span>");
+    expect(markup).toContain("手册");
+  });
+
   test("automatically turns plain URLs and email addresses into clickable links", () => {
     const content = serializeMemoDocument({
       version: 1,

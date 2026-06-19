@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { invoke } from "@tauri-apps/api/core";
+import { readImage, readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import type { ExternalImageData } from "../features/images/pendingImages";
+import { showToast } from "./Toast";
 
 interface MenuState {
   x: number;
@@ -10,6 +13,70 @@ interface MenuState {
 
 const textareaSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
 const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+
+async function readWebClipboardImageFile(): Promise<File | null> {
+  if (!navigator.clipboard?.read) return null;
+  const items = await navigator.clipboard.read();
+  for (const item of items) {
+    const imageType = item.types.find((type) => type.startsWith("image/"));
+    if (!imageType) continue;
+    const blob = await item.getType(imageType);
+    return new File([blob], `clipboard.${imageType.split("/")[1] || "png"}`, {
+      type: imageType,
+    });
+  }
+  return null;
+}
+
+async function readTauriClipboardImageFile(): Promise<File> {
+  const image = await readImage();
+  try {
+    const [{ width, height }, rgba] = await Promise.all([image.size(), image.rgba()]);
+    if (width <= 0 || height <= 0 || rgba.length !== width * height * 4) {
+      throw new Error("剪贴板图片数据无效");
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("无法创建图片转换画布");
+    context.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (value) => (value ? resolve(value) : reject(new Error("剪贴板图片转 PNG 失败"))),
+        "image/png",
+      );
+    });
+    return new File([blob], "clipboard.png", { type: "image/png" });
+  } finally {
+    await image.close();
+  }
+}
+
+function externalImageToFile(image: ExternalImageData): File {
+  return new File([new Uint8Array(image.data)], image.fileName, { type: image.mimeType });
+}
+
+async function readClipboardImageFiles(): Promise<File[]> {
+  try {
+    const images = await invoke<ExternalImageData[]>("clipboard_read_image_files");
+    if (images.length > 0) return images.map(externalImageToFile);
+  } catch {
+    // The Windows file-list format may not be present; continue with bitmap formats.
+  }
+
+  try {
+    const image = await readWebClipboardImageFile();
+    if (image) return [image];
+  } catch {
+    // WebView clipboard access may be unavailable; use the Tauri plugin below.
+  }
+  return [await readTauriClipboardImageFile()];
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export function ContextMenuProvider({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
@@ -112,8 +179,31 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
           }
           break;
         case "paste": {
-          const text = await readText();
-          setValue(before + text + after, start + text.length);
+          const memoEditor = target.closest('[data-memo-editor="true"]') as
+            | (HTMLElement & { floralPasteImages?: (files: File[]) => void })
+            | null;
+          let imageError: unknown;
+          if (memoEditor?.floralPasteImages) {
+            try {
+              const images = await readClipboardImageFiles();
+              memoEditor.floralPasteImages(images);
+              break;
+            } catch (error) {
+              imageError = error;
+            }
+          }
+          try {
+            const text = await readText();
+            if (text) {
+              setValue(before + text + after, start + text.length);
+              break;
+            }
+          } catch (error) {
+            if (!imageError) imageError = error;
+          }
+          if (memoEditor && imageError) {
+            showToast(`粘贴图片失败：${errorMessage(imageError)}`);
+          }
           break;
         }
         case "selectAll":

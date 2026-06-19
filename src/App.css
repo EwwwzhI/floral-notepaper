@@ -786,11 +786,18 @@ input::placeholder {
 }
 
 .memo-block-input {
+  display: block;
+  box-sizing: border-box;
   width: 100%;
+  margin: 0;
+  padding: 0;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--color-ink-soft);
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
   resize: none;
   overflow: hidden;
   field-sizing: content;
@@ -799,7 +806,7 @@ input::placeholder {
 }
 
 .memo-text-input {
-  min-height: 5.4em;
+  min-height: 1.8em;
   line-height: 1.8;
   text-wrap: pretty;
 }
@@ -816,9 +823,54 @@ input::placeholder {
   color: color-mix(in srgb, var(--color-ink-ghost) 58%, transparent);
 }
 
+.memo-format-overlay {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  left: 0;
+  right: 22px;
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  color: var(--color-ink-soft);
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.memo-text-row.has-link > .memo-format-overlay {
+  right: 46px;
+}
+
+.memo-todo-row > .memo-format-overlay {
+  left: 28px;
+  right: 24px;
+}
+
+.memo-todo-row.has-link > .memo-format-overlay {
+  right: 46px;
+}
+
+.memo-format-overlay.is-linked,
 .memo-block-input.is-linked {
   color: var(--color-link);
   text-decoration-color: color-mix(in srgb, var(--color-link) 72%, transparent);
+}
+
+.memo-block-input.has-inline-format {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--color-ink-soft);
+}
+
+.memo-block-input.is-heading.has-inline-format {
+  color: transparent;
+  caret-color: var(--color-bamboo);
 }
 
 .memo-todo-row {
@@ -937,6 +989,15 @@ input::placeholder {
   place-self: center;
   margin: 6px auto 10px;
   overflow: visible;
+}
+
+.memo-image-block:focus {
+  outline: none;
+}
+
+.memo-image-block:focus-visible .memo-image,
+.memo-image-block.is-missing:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-bamboo) 55%, transparent);
 }
 
 .memo-image-block.is-missing {
@@ -1145,9 +1206,5 @@ input::placeholder {
 
   .memo-tool-button {
     height: 30px;
-  }
-
-  .memo-text-input {
-    min-height: 3.6em;
   }
 }

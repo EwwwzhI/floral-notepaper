@@ -19,6 +19,7 @@ const LOCALIZED_ERROR_CODES = new Set([
   "desktopConfig",
   "duplicateShortcut",
   "noPool",
+  "noteConflict",
   "noteNotFound",
   "unsupportedFile",
   "unsupportedShortcut",
@@ -36,8 +37,12 @@ export function createNote(request: SaveNoteRequest): Promise<Note> {
   return invoke("notes_create", { request });
 }
 
-export function updateNote(id: string, request: SaveNoteRequest): Promise<Note> {
-  return invoke("notes_update", { id, request });
+export function updateNote(
+  id: string,
+  request: SaveNoteRequest,
+  expectedUpdatedAt?: string | null,
+): Promise<Note> {
+  return invoke("notes_update", { id, request, expectedUpdatedAt });
 }
 
 export function deleteNote(id: string): Promise<void> {
@@ -183,6 +188,10 @@ function getLocalizedAppErrorMessage(
       });
     case "noteNotFound":
       return translate("errors.noteNotFound", { defaultValue: "找不到该便签" });
+    case "noteConflict":
+      return translate("errors.noteConflict", {
+        defaultValue: "该便签已在其他窗口更新，请重新打开后再编辑",
+      });
     case "duplicateShortcut":
       return translate("errors.duplicateShortcut", {
         defaultValue: "显示/隐藏窗口快捷键不能与呼出小窗快捷键重复",

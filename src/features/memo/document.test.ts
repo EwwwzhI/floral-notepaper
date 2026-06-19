@@ -5,12 +5,15 @@ import {
   findMemoTextLinks,
   isMemoContent,
   legacyContentToMemoDocument,
+  memoFormattedSegments,
   memoHasContent,
   memoLinkFromPastedText,
   memoPlainText,
   normalizeMemoLinkUrl,
   parseMemoContent,
   serializeMemoDocument,
+  toggleMemoTextFormat,
+  updateMemoBlockText,
 } from "./document";
 
 describe("memo document", () => {
@@ -55,6 +58,29 @@ describe("memo document", () => {
       },
     ]);
     expect(memoPlainText(content)).toBe("买菜\n带环保袋");
+  });
+
+  test("applies formatting only to the selected text and keeps ranges while editing", () => {
+    const block = {
+      id: "text-1",
+      type: "text" as const,
+      text: "更新文档手册",
+      style: "body" as const,
+    };
+
+    const formatted = toggleMemoTextFormat(block, 2, 4, "bold");
+    expect(memoFormattedSegments(formatted)).toEqual([
+      { start: 0, end: 2, text: "更新", format: {} },
+      { start: 2, end: 4, text: "文档", format: { bold: true } },
+      { start: 4, end: 6, text: "手册", format: {} },
+    ]);
+
+    const edited = updateMemoBlockText(formatted, "更新新文档手册");
+    expect(memoFormattedSegments(edited)).toEqual([
+      { start: 0, end: 3, text: "更新新", format: {} },
+      { start: 3, end: 5, text: "文档", format: { bold: true } },
+      { start: 5, end: 7, text: "手册", format: {} },
+    ]);
   });
 
   test("normalizes supported links and rejects unsafe protocols", () => {

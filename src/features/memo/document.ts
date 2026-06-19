@@ -8,12 +8,19 @@ export interface MemoTextFormat {
   underline?: boolean;
 }
 
+export interface MemoFormatRange {
+  start: number;
+  end: number;
+  format: MemoTextFormat;
+}
+
 export interface MemoTextBlock {
   id: string;
   type: "text";
   text: string;
   style: MemoTextStyle;
   format?: MemoTextFormat;
+  formats?: MemoFormatRange[];
   link?: string;
 }
 
@@ -23,6 +30,7 @@ export interface MemoTodoBlock {
   text: string;
   checked: boolean;
   format?: MemoTextFormat;
+  formats?: MemoFormatRange[];
   link?: string;
 }
 
@@ -146,6 +154,21 @@ function parseTextFormat(value: unknown): MemoTextFormat | undefined {
   return format.bold || format.italic || format.underline ? format : undefined;
 }
 
+function parseFormatRanges(value: unknown, textLength: number): MemoFormatRange[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ranges = value
+    .map((item): MemoFormatRange | null => {
+      if (!isRecord(item)) return null;
+      const start = typeof item.start === "number" ? Math.max(0, Math.floor(item.start)) : 0;
+      const end =
+        typeof item.end === "number" ? Math.min(textLength, Math.floor(item.end)) : textLength;
+      const format = parseTextFormat(item.format);
+      return format && end > start ? { start, end, format } : null;
+    })
+    .filter((range): range is MemoFormatRange => range !== null);
+  return ranges.length > 0 ? ranges : undefined;
+}
+
 function parseBlock(value: unknown): MemoBlock | null {
   if (!isRecord(value) || typeof value.type !== "string") return null;
   const id = typeof value.id === "string" && value.id ? value.id : createMemoBlockId();
@@ -157,6 +180,7 @@ function parseBlock(value: unknown): MemoBlock | null {
       text: value.text,
       style: value.style === "heading" ? "heading" : "body",
       format: parseTextFormat(value.format),
+      formats: parseFormatRanges(value.formats, value.text.length),
       link:
         typeof value.link === "string"
           ? (normalizeMemoLinkUrl(value.link) ?? undefined)
@@ -171,6 +195,7 @@ function parseBlock(value: unknown): MemoBlock | null {
       text: value.text,
       checked: value.checked === true,
       format: parseTextFormat(value.format),
+      formats: parseFormatRanges(value.formats, value.text.length),
       link:
         typeof value.link === "string"
           ? (normalizeMemoLinkUrl(value.link) ?? undefined)
@@ -188,6 +213,124 @@ function parseBlock(value: unknown): MemoBlock | null {
   }
 
   return null;
+}
+
+type MemoFormattedBlock = MemoTextBlock | MemoTodoBlock;
+
+function sameTextFormat(left: MemoTextFormat, right: MemoTextFormat): boolean {
+  return (
+    Boolean(left.bold) === Boolean(right.bold) &&
+    Boolean(left.italic) === Boolean(right.italic) &&
+    Boolean(left.underline) === Boolean(right.underline)
+  );
+}
+
+function effectiveFormats(block: MemoFormattedBlock): MemoTextFormat[] {
+  const formats = Array.from({ length: block.text.length }, () => ({ ...block.format }));
+  for (const range of block.formats ?? []) {
+    const start = Math.max(0, Math.min(block.text.length, range.start));
+    const end = Math.max(start, Math.min(block.text.length, range.end));
+    for (let index = start; index < end; index += 1) {
+      formats[index] = { ...formats[index], ...range.format };
+    }
+  }
+  return formats;
+}
+
+function compressFormats(formats: MemoTextFormat[]): MemoFormatRange[] | undefined {
+  const ranges: MemoFormatRange[] = [];
+  let start = 0;
+  while (start < formats.length) {
+    const format = formats[start];
+    let end = start + 1;
+    while (end < formats.length && sameTextFormat(formats[end], format)) end += 1;
+    if (format.bold || format.italic || format.underline) {
+      ranges.push({ start, end, format });
+    }
+    start = end;
+  }
+  return ranges.length > 0 ? ranges : undefined;
+}
+
+export interface MemoFormattedSegment {
+  start: number;
+  end: number;
+  text: string;
+  format: MemoTextFormat;
+}
+
+export function memoFormattedSegments(block: MemoFormattedBlock): MemoFormattedSegment[] {
+  if (!block.text) return [];
+  const formats = effectiveFormats(block);
+  const segments: MemoFormattedSegment[] = [];
+  let start = 0;
+  while (start < block.text.length) {
+    const format = formats[start];
+    let end = start + 1;
+    while (end < block.text.length && sameTextFormat(formats[end], format)) end += 1;
+    segments.push({ start, end, text: block.text.slice(start, end), format });
+    start = end;
+  }
+  return segments;
+}
+
+export function toggleMemoTextFormat(
+  block: MemoFormattedBlock,
+  selectionStart: number,
+  selectionEnd: number,
+  key: keyof MemoTextFormat,
+): MemoFormattedBlock {
+  const formats = effectiveFormats(block);
+  const start = Math.max(0, Math.min(block.text.length, selectionStart));
+  const requestedEnd = Math.max(0, Math.min(block.text.length, selectionEnd));
+  const hasSelection = requestedEnd > start;
+  const rangeStart = hasSelection ? start : 0;
+  const end = hasSelection ? requestedEnd : block.text.length;
+  if (end <= rangeStart) return block;
+
+  const enable = !formats.slice(rangeStart, end).every((format) => Boolean(format[key]));
+  for (let index = rangeStart; index < end; index += 1) {
+    formats[index] = { ...formats[index], [key]: enable || undefined };
+  }
+  return { ...block, format: undefined, formats: compressFormats(formats) };
+}
+
+export function updateMemoBlockText(
+  block: MemoFormattedBlock,
+  nextText: string,
+): MemoFormattedBlock {
+  if (nextText === block.text) return block;
+  const previousFormats = effectiveFormats(block);
+  let prefix = 0;
+  while (
+    prefix < block.text.length &&
+    prefix < nextText.length &&
+    block.text[prefix] === nextText[prefix]
+  ) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < block.text.length - prefix &&
+    suffix < nextText.length - prefix &&
+    block.text[block.text.length - 1 - suffix] === nextText[nextText.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+
+  const insertedLength = nextText.length - prefix - suffix;
+  const inheritedFormat = previousFormats[Math.max(0, prefix - 1)] ?? previousFormats[prefix] ?? {};
+  const nextFormats = [
+    ...previousFormats.slice(0, prefix),
+    ...Array.from({ length: insertedLength }, () => ({ ...inheritedFormat })),
+    ...previousFormats.slice(block.text.length - suffix),
+  ];
+  return {
+    ...block,
+    text: nextText,
+    format: undefined,
+    formats: compressFormats(nextFormats),
+  };
 }
 
 function stripInlineMarkdown(value: string): string {
@@ -287,6 +430,7 @@ export function normalizeMemoDocument(document: MemoDocument): MemoDocument {
       return {
         ...block,
         link: normalizeMemoLinkUrl(block.link) ?? undefined,
+        formats: parseFormatRanges(block.formats, block.text.length),
       };
     });
   return blocks.length > 0 ? { version: 1, blocks } : createEmptyMemoDocument();

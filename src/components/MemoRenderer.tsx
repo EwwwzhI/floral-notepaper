@@ -4,10 +4,12 @@ import { useMemo, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   findMemoTextLinks,
+  memoFormattedSegments,
   memoHasContent,
   normalizeMemoLinkUrl,
   parseMemoContent,
   serializeMemoDocument,
+  type MemoTextBlock,
   type MemoTodoBlock,
 } from "../features/memo/document";
 
@@ -65,6 +67,21 @@ function LinkedMemoText({ text }: { text: string }) {
   }
   if (offset < text.length) parts.push(text.slice(offset));
   return parts;
+}
+
+function FormattedMemoText({ block }: { block: MemoTextBlock | MemoTodoBlock }) {
+  return memoFormattedSegments(block).map((segment) => (
+    <span
+      key={`${segment.start}-${segment.end}`}
+      style={{
+        fontWeight: segment.format.bold ? 700 : undefined,
+        fontStyle: segment.format.italic ? "italic" : undefined,
+        textDecoration: segment.format.underline ? "underline" : undefined,
+      }}
+    >
+      {block.link ? segment.text : <LinkedMemoText text={segment.text} />}
+    </span>
+  ));
 }
 
 export function MemoRenderer({
@@ -134,37 +151,13 @@ export function MemoRenderer({
                   title={block.link}
                   onClick={(event) => openMemoLink(event, block.link!)}
                 >
-                  <span
-                    className={block.checked ? "is-checked" : ""}
-                    style={{
-                      fontWeight: block.format?.bold ? 700 : undefined,
-                      fontStyle: block.format?.italic ? "italic" : undefined,
-                      textDecoration: [
-                        block.checked ? "line-through" : "",
-                        block.format?.underline ? "underline" : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" "),
-                    }}
-                  >
-                    {block.text}
+                  <span className={block.checked ? "is-checked" : ""}>
+                    <FormattedMemoText block={block} />
                   </span>
                 </a>
               ) : (
-                <span
-                  className={block.checked ? "is-checked" : ""}
-                  style={{
-                    fontWeight: block.format?.bold ? 700 : undefined,
-                    fontStyle: block.format?.italic ? "italic" : undefined,
-                    textDecoration: [
-                      block.checked ? "line-through" : "",
-                      block.format?.underline ? "underline" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" "),
-                  }}
-                >
-                  <LinkedMemoText text={block.text} />
+                <span className={block.checked ? "is-checked" : ""}>
+                  <FormattedMemoText block={block} />
                 </span>
               )}
             </div>
@@ -172,15 +165,8 @@ export function MemoRenderer({
         }
 
         const text = (
-          <div
-            className={`memo-renderer-text ${block.style === "heading" ? "is-heading" : ""}`}
-            style={{
-              fontWeight: block.format?.bold ? 700 : undefined,
-              fontStyle: block.format?.italic ? "italic" : undefined,
-              textDecoration: block.format?.underline ? "underline" : undefined,
-            }}
-          >
-            {block.link ? block.text : <LinkedMemoText text={block.text} />}
+          <div className={`memo-renderer-text ${block.style === "heading" ? "is-heading" : ""}`}>
+            <FormattedMemoText block={block} />
           </div>
         );
         return block.link ? (

@@ -43,7 +43,8 @@ import {
 } from "../features/images/pendingImages";
 import { applyAppFont, resolveNoteFontFamily } from "../features/settings/fonts";
 import { useImageBaseDir } from "../features/images/useImageBaseDir";
-import type { Note, NoteMetadata } from "../features/notes/types";
+import type { Note, NoteMetadata, NotesChangedEvent } from "../features/notes/types";
+import { shouldReloadOpenNote } from "../features/notes/sync";
 import {
   countNoteChars,
   filterNotes,
@@ -186,6 +187,13 @@ export function MainWindow({
   pendingImagesRef.current = pendingImages;
   const pendingImageUrls = useMemo(() => pendingImageObjectUrls(pendingImages), [pendingImages]);
   const saveStateRef = useRef(saveState);
+  const currentWindowLabel = useMemo(() => {
+    try {
+      return getCurrentWindow().label;
+    } catch {
+      return "main";
+    }
+  }, []);
   const isMacOS = useMemo(() => {
     return (
       typeof navigator !== "undefined" &&
@@ -199,6 +207,7 @@ export function MainWindow({
   contentValueRef.current = content;
   const titleValueRef = useRef(title);
   titleValueRef.current = title;
+  const loadedUpdatedAtRef = useRef<string | null>(null);
   const notesRef = useRef(notes);
   notesRef.current = notes;
   // 每次"应用/切换当前笔记"都会自增；异步加载完成后若 epoch 已变化，说明用户
@@ -307,6 +316,7 @@ export function MainWindow({
       selectedIdRef.current = note.id;
       titleValueRef.current = note.title;
       contentValueRef.current = memoContent;
+      loadedUpdatedAtRef.current = note.updatedAt;
       saveStateRef.current = "saved";
       setSelectedId(note.id);
       setTitle(note.title);
@@ -353,6 +363,7 @@ export function MainWindow({
     selectedIdRef.current = null;
     titleValueRef.current = "";
     contentValueRef.current = "";
+    loadedUpdatedAtRef.current = null;
     saveStateRef.current = "idle";
     setSelectedId(null);
     setTitle("");
@@ -420,7 +431,7 @@ export function MainWindow({
   }, [mountedSidePanel, visibleSidePanel]);
 
   useEffect(() => {
-    const unlisten = listen("notes-changed", () => {
+    const unlisten = listen<NotesChangedEvent | null>("notes-changed", (event) => {
       // 记录事件到达时的 epoch；其间用户一旦切换/加载了笔记，本次同步即过期，
       // 不再用过期的列表快照去改选中或回填内容，避免把选中"拉回"刚保存的旧笔记
       const epochAtEvent = loadEpoch.peek();
@@ -432,17 +443,29 @@ export function MainWindow({
           if (!currentId) return;
           const stillExists = loaded.some((n) => n.id === currentId);
           if (stillExists) {
-            if (saveStateRef.current !== "dirty" && saveStateRef.current !== "saving") {
+            const hasLocalChanges =
+              saveStateRef.current === "dirty" ||
+              saveStateRef.current === "saving" ||
+              saveStateRef.current === "error";
+            const shouldReload = event.payload?.noteId
+              ? shouldReloadOpenNote(event.payload, currentId, currentWindowLabel, hasLocalChanges)
+              : !hasLocalChanges;
+            if (shouldReload) {
               void getNote(currentId)
                 .then((note) => {
                   if (isStale()) return;
                   if (selectedIdRef.current !== currentId) return;
-                  if (saveStateRef.current === "dirty" || saveStateRef.current === "saving") {
+                  if (
+                    saveStateRef.current === "dirty" ||
+                    saveStateRef.current === "saving" ||
+                    saveStateRef.current === "error"
+                  ) {
                     return;
                   }
                   const memoContent = serializeMemoDocument(parseMemoContent(note.content));
                   titleValueRef.current = note.title;
                   contentValueRef.current = memoContent;
+                  loadedUpdatedAtRef.current = note.updatedAt;
                   saveStateRef.current = "saved";
                   setTitle(note.title);
                   setContent(memoContent);
@@ -463,7 +486,7 @@ export function MainWindow({
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, [refreshNotes, loadNote, clearCurrentNote, loadEpoch]);
+  }, [refreshNotes, loadNote, clearCurrentNote, loadEpoch, currentWindowLabel]);
 
   useEffect(() => {
     function handleFocus() {
@@ -669,11 +692,16 @@ export function MainWindow({
           contentValueRef.current = currentContent;
           setContent(currentContent);
         }
-        const note = await updateNote(id, {
-          title: titleSnapshot,
-          content: persistedContent,
-          category,
-        });
+        const note = await updateNote(
+          id,
+          {
+            title: titleSnapshot,
+            content: persistedContent,
+            category,
+          },
+          loadedUpdatedAtRef.current,
+        );
+        loadedUpdatedAtRef.current = note.updatedAt;
         replaceNoteMetadata(note);
         const contentChanged =
           contentValueRef.current !== persistedContent || titleValueRef.current !== titleSnapshot;
@@ -696,6 +724,14 @@ export function MainWindow({
     },
     [performSave],
   );
+
+  useEffect(() => {
+    if (!settingsConfig?.noteAutoSave || !selectedId || saveState !== "dirty") return;
+    const timer = window.setTimeout(() => {
+      void saveCurrentNote();
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [content, saveCurrentNote, saveState, selectedId, settingsConfig?.noteAutoSave, title]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -1717,7 +1753,7 @@ export function MainWindow({
             </div>
           )}
 
-          <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 h-10 border-b border-paper-deep/20 shrink-0 bg-paper/20">
               <div className="flex items-center gap-1">
                 <button
@@ -2150,7 +2186,7 @@ export function MainWindow({
                   {t("main.editor.emptyHint", { defaultValue: "选择或新建一张便签" })}
                 </div>
               ) : (
-                <div className="flex-1 min-h-0 px-6 pt-3 pb-2">
+                <div className="flex flex-1 min-h-0 flex-col overflow-hidden px-6 pt-3 pb-2">
                   <MemoEditor
                     ref={memoEditorRef}
                     value={content}

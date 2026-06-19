@@ -10,6 +10,30 @@ use services::notes::{
 use std::{collections::BTreeSet, env, fs, io::Write, path::PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NotesChangedEvent {
+    note_id: Option<String>,
+    updated_at: Option<String>,
+    source_window: String,
+}
+
+fn emit_note_changed(
+    app: &AppHandle,
+    source_window: &tauri::WebviewWindow,
+    note_id: Option<String>,
+    updated_at: Option<String>,
+) {
+    let _ = app.emit(
+        "notes-changed",
+        NotesChangedEvent {
+            note_id,
+            updated_at,
+            source_window: source_window.label().to_string(),
+        },
+    );
+}
+
 #[tauri::command]
 fn app_name() -> Result<String, AppError> {
     let locale = Locale::from_tag(&default_store()?.load_config()?.locale);
@@ -27,23 +51,54 @@ fn notes_get(id: String) -> Result<Note, AppError> {
 }
 
 #[tauri::command]
-fn notes_create(app: AppHandle, request: SaveNoteRequest) -> Result<Note, AppError> {
+fn notes_create(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    request: SaveNoteRequest,
+) -> Result<Note, AppError> {
     let note = default_store()?.create_note(request)?;
-    let _ = app.emit("notes-changed", ());
+    emit_note_changed(
+        &app,
+        &window,
+        Some(note.id.clone()),
+        Some(note.updated_at.to_rfc3339()),
+    );
     Ok(note)
 }
 
 #[tauri::command]
-fn notes_update(app: AppHandle, id: String, request: SaveNoteRequest) -> Result<Note, AppError> {
-    let note = default_store()?.update_note(&id, request)?;
-    let _ = app.emit("notes-changed", ());
+fn notes_update(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    request: SaveNoteRequest,
+    expected_updated_at: Option<String>,
+) -> Result<Note, AppError> {
+    let expected_updated_at = expected_updated_at
+        .map(|value| {
+            chrono::DateTime::parse_from_rfc3339(&value)
+                .map(|date| date.with_timezone(&chrono::Utc))
+                .map_err(|error| AppError {
+                    code: "invalidNoteVersion".into(),
+                    message: error.to_string(),
+                    details: Default::default(),
+                })
+        })
+        .transpose()?;
+    let note = default_store()?.update_note_if_unmodified(&id, request, expected_updated_at)?;
+    emit_note_changed(
+        &app,
+        &window,
+        Some(note.id.clone()),
+        Some(note.updated_at.to_rfc3339()),
+    );
     Ok(note)
 }
 
 #[tauri::command]
-fn notes_delete(app: AppHandle, id: String) -> Result<(), AppError> {
+fn notes_delete(app: AppHandle, window: tauri::WebviewWindow, id: String) -> Result<(), AppError> {
     default_store()?.delete_note(&id)?;
-    let _ = app.emit("notes-changed", ());
+    emit_note_changed(&app, &window, Some(id), None);
     Ok(())
 }
 
@@ -183,6 +238,106 @@ fn images_clean_unused(note_id: String, content: String) -> Result<Vec<String>, 
 #[tauri::command]
 fn images_read_external(file_path: String) -> Result<ExternalImageData, AppError> {
     default_store()?.read_external_image(&PathBuf::from(file_path))
+}
+
+#[cfg(target_os = "windows")]
+fn clipboard_file_paths() -> Result<Vec<PathBuf>, AppError> {
+    use std::{ptr::null_mut, thread, time::Duration};
+    use windows_sys::Win32::{
+        System::DataExchange::{
+            CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+        },
+        UI::Shell::DragQueryFileW,
+    };
+
+    const CF_HDROP: u32 = 15;
+
+    unsafe {
+        if IsClipboardFormatAvailable(CF_HDROP) == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut opened = false;
+        for _ in 0..5 {
+            if OpenClipboard(null_mut()) != 0 {
+                opened = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        if !opened {
+            return Err(AppError {
+                code: "clipboardUnavailable".into(),
+                message: "剪贴板当前被其他程序占用".into(),
+                details: Default::default(),
+            });
+        }
+
+        struct ClipboardGuard;
+        impl Drop for ClipboardGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    CloseClipboard();
+                }
+            }
+        }
+        let _guard = ClipboardGuard;
+
+        let drop_handle = GetClipboardData(CF_HDROP);
+        if drop_handle.is_null() {
+            return Err(AppError {
+                code: "clipboardReadFailed".into(),
+                message: "无法读取剪贴板中的文件".into(),
+                details: Default::default(),
+            });
+        }
+
+        let file_count = DragQueryFileW(drop_handle, u32::MAX, null_mut(), 0);
+        let mut paths = Vec::with_capacity(file_count as usize);
+        for index in 0..file_count {
+            let length = DragQueryFileW(drop_handle, index, null_mut(), 0);
+            if length == 0 {
+                continue;
+            }
+            let mut buffer = vec![0_u16; length as usize + 1];
+            let copied =
+                DragQueryFileW(drop_handle, index, buffer.as_mut_ptr(), buffer.len() as u32);
+            if copied > 0 {
+                paths.push(PathBuf::from(String::from_utf16_lossy(
+                    &buffer[..copied as usize],
+                )));
+            }
+        }
+        Ok(paths)
+    }
+}
+
+#[tauri::command]
+fn clipboard_read_image_files() -> Result<Vec<ExternalImageData>, AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+        let store = default_store()?;
+        clipboard_file_paths()?
+            .into_iter()
+            .filter(|path| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(|extension| {
+                        IMAGE_EXTENSIONS
+                            .iter()
+                            .any(|allowed| extension.eq_ignore_ascii_case(allowed))
+                    })
+                    .unwrap_or(false)
+            })
+            .map(|path| store.read_external_image(&path))
+            .collect()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(Vec::new())
+    }
 }
 
 #[tauri::command]
@@ -458,6 +613,7 @@ pub fn run() {
             images_get_base_dir,
             images_clean_unused,
             images_read_external,
+            clipboard_read_image_files,
             fonts_list_system,
             config_get,
             copy_background_image,

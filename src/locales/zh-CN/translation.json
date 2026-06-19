@@ -45,6 +45,7 @@
     "imagePasteFailed": "图片粘贴失败",
     "imageTooLarge": "图片文件过大（上限 20 MB）",
     "noPool": "便签窗口池尚未初始化",
+    "noteConflict": "该便签已在其他窗口更新，请重新打开后再编辑",
     "noteNotFound": "找不到该便签",
     "unsupportedFile": "只支持导入 .md 文件",
     "unsupportedImageFormat": "不支持的图片格式",
@@ -210,6 +211,7 @@
       "empty": "空",
       "opened": "已打开",
       "saveFailed": "保存失败",
+      "saving": "保存中",
       "saved": "已保存",
       "unsaved": "未保存"
     },
@@ -243,7 +245,7 @@
   "settings": {
     "autoSave": {
       "externalFile": "外部文件自动保存",
-      "note": "自动保存便签",
+      "note": "主编辑区自动保存",
       "surface": "便签小窗自动保存"
     },
     "autostart": "开机自启",
