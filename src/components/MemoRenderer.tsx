@@ -70,18 +70,34 @@ function LinkedMemoText({ text }: { text: string }) {
 }
 
 function FormattedMemoText({ block }: { block: MemoTextBlock | MemoTodoBlock }) {
-  return memoFormattedSegments(block).map((segment) => (
-    <span
-      key={`${segment.start}-${segment.end}`}
-      style={{
-        fontWeight: segment.format.bold ? 700 : undefined,
-        fontStyle: segment.format.italic ? "italic" : undefined,
-        textDecoration: segment.format.underline ? "underline" : undefined,
-      }}
-    >
-      {block.link ? segment.text : <LinkedMemoText text={segment.text} />}
-    </span>
-  ));
+  return memoFormattedSegments(block).map((segment) => {
+    const content = segment.format.link ? (
+      <a
+        href={segment.format.link}
+        className="memo-renderer-link"
+        title={segment.format.link}
+        onClick={(event) => openMemoLink(event, segment.format.link!)}
+      >
+        {segment.text}
+      </a>
+    ) : block.link ? (
+      segment.text
+    ) : (
+      <LinkedMemoText text={segment.text} />
+    );
+    return (
+      <span
+        key={`${segment.start}-${segment.end}`}
+        style={{
+          fontWeight: segment.format.bold ? 700 : undefined,
+          fontStyle: segment.format.italic ? "italic" : undefined,
+          textDecoration: segment.format.underline ? "underline" : undefined,
+        }}
+      >
+        {content}
+      </span>
+    );
+  });
 }
 
 export function MemoRenderer({
@@ -109,7 +125,10 @@ export function MemoRenderer({
         if (block.type === "image") {
           const src = resolveImageSrc(block.src, imageBaseDir, pendingImages);
           return src ? (
-            <figure key={block.id} className="memo-renderer-image-wrap">
+            <figure
+              key={block.id}
+              className={`memo-renderer-image-wrap is-${block.align ?? "center"}`}
+            >
               <img
                 src={src}
                 alt={block.alt ?? ""}

@@ -1947,6 +1947,47 @@ export function MainWindow({
                   </svg>
                 </button>
 
+                {(["left", "center", "right"] as const).map((alignment) => (
+                  <button
+                    key={alignment}
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => memoEditorRef.current?.alignImage(alignment)}
+                    disabled={!selectedId}
+                    className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-bamboo hover:bg-bamboo-mist transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                    title={
+                      alignment === "left"
+                        ? "图片左对齐"
+                        : alignment === "right"
+                          ? "图片右对齐"
+                          : "图片居中"
+                    }
+                    aria-label={
+                      alignment === "left"
+                        ? "图片左对齐"
+                        : alignment === "right"
+                          ? "图片右对齐"
+                          : "图片居中"
+                    }
+                  >
+                    <svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true">
+                      <path
+                        d={
+                          alignment === "left"
+                            ? "M3 4h9M3 8h14M3 12h9M3 16h14"
+                            : alignment === "right"
+                              ? "M8 4h9M3 8h14M8 12h9M3 16h14"
+                              : "M5.5 4h9M3 8h14M5.5 12h9M3 16h14"
+                        }
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+                ))}
+
                 <button
                   type="button"
                   onClick={() => void saveCurrentNote(true)}

@@ -1,11 +1,13 @@
 export const MEMO_CONTENT_PREFIX = "FLORAL_MEMO_V1\n";
 
 export type MemoTextStyle = "body" | "heading";
+export type MemoImageAlignment = "left" | "center" | "right";
 
 export interface MemoTextFormat {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
+  link?: string;
 }
 
 export interface MemoFormatRange {
@@ -39,6 +41,7 @@ export interface MemoImageBlock {
   type: "image";
   src: string;
   alt?: string;
+  align?: MemoImageAlignment;
 }
 
 export type MemoBlock = MemoTextBlock | MemoTodoBlock | MemoImageBlock;
@@ -150,8 +153,10 @@ function parseTextFormat(value: unknown): MemoTextFormat | undefined {
     bold: value.bold === true || undefined,
     italic: value.italic === true || undefined,
     underline: value.underline === true || undefined,
+    link:
+      typeof value.link === "string" ? (normalizeMemoLinkUrl(value.link) ?? undefined) : undefined,
   };
-  return format.bold || format.italic || format.underline ? format : undefined;
+  return format.bold || format.italic || format.underline || format.link ? format : undefined;
 }
 
 function parseFormatRanges(value: unknown, textLength: number): MemoFormatRange[] | undefined {
@@ -209,6 +214,10 @@ function parseBlock(value: unknown): MemoBlock | null {
       type: "image",
       src: value.src,
       alt: typeof value.alt === "string" ? value.alt : undefined,
+      align:
+        value.align === "left" || value.align === "right" || value.align === "center"
+          ? value.align
+          : undefined,
     };
   }
 
@@ -221,7 +230,8 @@ function sameTextFormat(left: MemoTextFormat, right: MemoTextFormat): boolean {
   return (
     Boolean(left.bold) === Boolean(right.bold) &&
     Boolean(left.italic) === Boolean(right.italic) &&
-    Boolean(left.underline) === Boolean(right.underline)
+    Boolean(left.underline) === Boolean(right.underline) &&
+    left.link === right.link
   );
 }
 
@@ -244,7 +254,7 @@ function compressFormats(formats: MemoTextFormat[]): MemoFormatRange[] | undefin
     const format = formats[start];
     let end = start + 1;
     while (end < formats.length && sameTextFormat(formats[end], format)) end += 1;
-    if (format.bold || format.italic || format.underline) {
+    if (format.bold || format.italic || format.underline || format.link) {
       ranges.push({ start, end, format });
     }
     start = end;

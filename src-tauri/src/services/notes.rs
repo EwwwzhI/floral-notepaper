@@ -1742,18 +1742,31 @@ fn memo_to_markdown(content: &str) -> Option<String> {
     Some(markdown)
 }
 
-fn memo_text_format(value: Option<&serde_json::Value>) -> (bool, bool, bool) {
+fn memo_text_format(value: Option<&serde_json::Value>) -> (bool, bool, bool, Option<&str>) {
     let enabled = |key| {
         value
             .and_then(|format| format.get(key))
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
     };
-    (enabled("bold"), enabled("italic"), enabled("underline"))
+    let link = value
+        .and_then(|format| format.get("link"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|url| {
+            ["http://", "https://", "mailto:", "tel:"]
+                .iter()
+                .any(|prefix| url.to_ascii_lowercase().starts_with(prefix))
+        });
+    (
+        enabled("bold"),
+        enabled("italic"),
+        enabled("underline"),
+        link,
+    )
 }
 
-fn apply_memo_markdown_format(text: &str, format: (bool, bool, bool)) -> String {
-    let (bold, italic, underline) = format;
+fn apply_memo_markdown_format(text: &str, format: (bool, bool, bool, Option<&str>)) -> String {
+    let (bold, italic, underline, link) = format;
     text.split('\n')
         .map(|line| {
             if line.is_empty() {
@@ -1767,6 +1780,10 @@ fn apply_memo_markdown_format(text: &str, format: (bool, bool, bool)) -> String 
             };
             if underline {
                 formatted = format!("<u>{formatted}</u>");
+            }
+            if let Some(url) = link {
+                let escaped_url = url.replace('<', "%3C").replace('>', "%3E");
+                formatted = format!("[{formatted}](<{escaped_url}>)");
             }
             formatted
         })
@@ -1785,7 +1802,7 @@ fn memo_markdown_format(block: &serde_json::Value, text: &str) -> String {
 
     let mut output = String::new();
     let mut segment = String::new();
-    let mut segment_format: Option<(bool, bool, bool)> = None;
+    let mut segment_format: Option<(bool, bool, bool, Option<&str>)> = None;
     let mut utf16_offset = 0_u64;
 
     for ch in text.chars() {
@@ -1805,6 +1822,7 @@ fn memo_markdown_format(block: &serde_json::Value, text: &str) -> String {
                     format.0 || range_format.0,
                     format.1 || range_format.1,
                     format.2 || range_format.2,
+                    range_format.3.or(format.3),
                 );
             }
         }
@@ -2801,6 +2819,35 @@ mod tests {
         assert_eq!(
             memo_to_markdown(&content).as_deref(),
             Some("更新<u>**文档**</u>手册")
+        );
+    }
+
+    #[test]
+    fn exports_structured_memo_with_partial_link_range() {
+        let content = format!(
+            "{MEMO_CONTENT_PREFIX}{}",
+            serde_json::json!({
+                "version": 1,
+                "blocks": [{
+                    "id": "text",
+                    "type": "text",
+                    "text": "查看文档说明",
+                    "style": "body",
+                    "formats": [{
+                        "start": 2,
+                        "end": 4,
+                        "format": {
+                            "bold": true,
+                            "link": "https://example.com/docs"
+                        }
+                    }]
+                }]
+            })
+        );
+
+        assert_eq!(
+            memo_to_markdown(&content).as_deref(),
+            Some("查看[**文档**](<https://example.com/docs>)说明")
         );
     }
 

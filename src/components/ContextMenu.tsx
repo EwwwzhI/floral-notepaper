@@ -28,6 +28,16 @@ async function readWebClipboardImageFile(): Promise<File | null> {
   return null;
 }
 
+async function readWebClipboardHtml(): Promise<string | null> {
+  if (!navigator.clipboard?.read) return null;
+  const items = await navigator.clipboard.read();
+  for (const item of items) {
+    if (!item.types.includes("text/html")) continue;
+    return await (await item.getType("text/html")).text();
+  }
+  return null;
+}
+
 async function readTauriClipboardImageFile(): Promise<File> {
   const image = await readImage();
   try {
@@ -90,8 +100,12 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     function handleContextMenu(event: MouseEvent) {
       const target = event.target as HTMLElement;
+      const memoImage = target.matches('[data-memo-editor="true"] .memo-prosemirror img');
       const isEditable =
-        target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable;
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "INPUT" ||
+        target.isContentEditable ||
+        Boolean(target.closest('[contenteditable="true"], [data-memo-editor="true"]'));
 
       if (!isEditable) {
         event.preventDefault();
@@ -114,7 +128,7 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
 
       editableTargetRef.current = target;
       setMenuClosing(false);
-      setMenu({ x, y, hasSelection: selection.length > 0 });
+      setMenu({ x, y, hasSelection: memoImage || selection.length > 0 });
     }
 
     function handleClick() {
@@ -150,7 +164,53 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
 
   const runCommand = async (command: string) => {
     const target = editableTargetRef.current;
+    const memoEditor = target?.closest('[data-memo-editor="true"]') as
+      | (HTMLElement & {
+          floralPasteImages?: (files: File[]) => void;
+          floralClipboardCommand?: (
+            command: "copy" | "cut" | "paste" | "selectAll",
+            content?: string,
+            isHtml?: boolean,
+          ) => Promise<boolean>;
+        })
+      | null;
 
+    if (memoEditor?.floralClipboardCommand) {
+      if (command === "paste") {
+        let imageError: unknown;
+        try {
+          const images = await readClipboardImageFiles();
+          if (images.length > 0 && memoEditor.floralPasteImages) {
+            memoEditor.floralPasteImages(images);
+            dismissMenu();
+            return;
+          }
+        } catch (error) {
+          imageError = error;
+        }
+        try {
+          let html: string | null = null;
+          try {
+            html = await readWebClipboardHtml();
+          } catch {
+            // WebView HTML clipboard access may be unavailable; use plain text below.
+          }
+          if (html) {
+            await memoEditor.floralClipboardCommand("paste", html, true);
+          } else {
+            const text = await readText();
+            if (text) await memoEditor.floralClipboardCommand("paste", text, false);
+            else if (imageError) throw imageError;
+          }
+        } catch (error) {
+          showToast(`粘贴失败：${errorMessage(error)}`);
+        }
+      } else {
+        await memoEditor.floralClipboardCommand(command as "copy" | "cut" | "selectAll");
+      }
+      dismissMenu();
+      return;
+    }
     if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
       const start = target.selectionStart ?? 0;
       const end = target.selectionEnd ?? 0;
@@ -210,9 +270,36 @@ export function ContextMenuProvider({ children }: { children: React.ReactNode })
           target.select();
           break;
       }
-    } else {
-      target?.focus();
-      document.execCommand(command);
+    } else if (target) {
+      target.focus();
+      const selection = window.getSelection();
+      if (command === "copy" || command === "cut") {
+        const selected = selection?.toString() ?? "";
+        if (selected) {
+          await writeText(selected);
+          if (command === "cut") selection?.deleteFromDocument();
+        }
+      } else if (command === "paste") {
+        const text = await readText();
+        if (text && selection?.rangeCount) {
+          const range = selection.getRangeAt(0);
+          range.deleteContents();
+          const node = document.createTextNode(text);
+          range.insertNode(node);
+          range.setStartAfter(node);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          target.dispatchEvent(
+            new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }),
+          );
+        }
+      } else if (command === "selectAll") {
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
     }
 
     dismissMenu();

@@ -83,6 +83,32 @@ describe("memo document", () => {
     ]);
   });
 
+  test("preserves partial links in formatting ranges", () => {
+    const content = serializeMemoDocument({
+      version: 1,
+      blocks: [
+        {
+          id: "text",
+          type: "text",
+          text: "查看文档",
+          style: "body",
+          formats: [{ start: 2, end: 4, format: { link: "https://example.com/docs" } }],
+        },
+      ],
+    });
+
+    const block = parseMemoContent(content).blocks[0];
+    expect(block.type === "text" ? memoFormattedSegments(block) : []).toEqual([
+      { start: 0, end: 2, text: "查看", format: {} },
+      {
+        start: 2,
+        end: 4,
+        text: "文档",
+        format: { link: "https://example.com/docs" },
+      },
+    ]);
+  });
+
   test("normalizes supported links and rejects unsafe protocols", () => {
     expect(normalizeMemoLinkUrl("example.com/docs")).toBe("https://example.com/docs");
     expect(normalizeMemoLinkUrl("hello@example.com")).toBe("mailto:hello@example.com");

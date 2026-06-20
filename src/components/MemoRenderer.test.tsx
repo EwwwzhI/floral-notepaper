@@ -53,6 +53,33 @@ describe("MemoRenderer", () => {
     expect(markup).toContain("手册");
   });
 
+  test("renders a link only around its configured text range", () => {
+    const content = serializeMemoDocument({
+      version: 1,
+      blocks: [
+        {
+          id: "text",
+          type: "text",
+          text: "查看文档说明",
+          style: "body",
+          formats: [
+            {
+              start: 2,
+              end: 4,
+              format: { link: "https://example.com/docs", bold: true },
+            },
+          ],
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(<MemoRenderer content={content} />);
+
+    expect(markup).toContain('href="https://example.com/docs"');
+    expect(markup).toContain("font-weight:700");
+    expect(markup).toContain(">文档</a>");
+  });
+
   test("automatically turns plain URLs and email addresses into clickable links", () => {
     const content = serializeMemoDocument({
       version: 1,
@@ -70,5 +97,23 @@ describe("MemoRenderer", () => {
 
     expect(markup).toContain('href="https://example.com/docs"');
     expect(markup).toContain('href="mailto:hi@example.com"');
+  });
+
+  test("renders persisted image alignment", () => {
+    const content = serializeMemoDocument({
+      version: 1,
+      blocks: [
+        {
+          id: "image",
+          type: "image",
+          src: "https://example.com/image.png",
+          align: "right",
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(<MemoRenderer content={content} />);
+
+    expect(markup).toContain("memo-renderer-image-wrap is-right");
   });
 });
