@@ -60,6 +60,7 @@ src-tauri/icons/macOS
 
 ## Generated
 src/generated/contributors.json
+Docs/release-note
 
 ## Temp
 temp/

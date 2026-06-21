@@ -674,6 +674,24 @@ impl NoteStore {
         Ok(config)
     }
 
+    pub fn remove_managed_background_file(&self, path: &str) {
+        let candidate = PathBuf::from(path.trim());
+        if !candidate.is_file() {
+            return;
+        }
+
+        let managed_dir = self.data_dir.join("backgrounds");
+        let (Ok(managed_dir), Ok(candidate)) =
+            (fs::canonicalize(managed_dir), fs::canonicalize(candidate))
+        else {
+            return;
+        };
+
+        if candidate.parent() == Some(managed_dir.as_path()) {
+            let _ = fs::remove_file(candidate);
+        }
+    }
+
     pub fn list_notes(&self) -> Result<Vec<NoteMetadata>, AppError> {
         self.ensure_storage()?;
         let mut metadata = self.load_metadata()?.notes;
@@ -2281,6 +2299,23 @@ mod tests {
         let loaded = store.load_config().expect("reload config");
         saved.data_dir = Some(store.data_dir().to_string_lossy().to_string());
         assert_eq!(loaded, saved);
+    }
+
+    #[test]
+    fn removes_only_background_files_managed_by_the_app() {
+        let store = test_store("managed-background");
+        let managed_dir = store.data_dir().join("backgrounds");
+        fs::create_dir_all(&managed_dir).expect("create backgrounds dir");
+        let managed = managed_dir.join("background.png");
+        let external = store.data_dir().join("external.png");
+        fs::write(&managed, b"managed").expect("write managed background");
+        fs::write(&external, b"external").expect("write external background");
+
+        store.remove_managed_background_file(managed.to_string_lossy().as_ref());
+        store.remove_managed_background_file(external.to_string_lossy().as_ref());
+
+        assert!(!managed.exists());
+        assert!(external.exists());
     }
 
     #[test]

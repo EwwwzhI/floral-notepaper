@@ -373,14 +373,6 @@ fn copy_background_image(_app: AppHandle, source_path: String) -> Result<String,
     let dir = store.data_dir().join("backgrounds");
     fs::create_dir_all(&dir)?;
 
-    let old_config = store.load_config()?;
-    if !old_config.background_image_path.is_empty() {
-        let old_path = PathBuf::from(&old_config.background_image_path);
-        if old_path.starts_with(&dir) && old_path.is_file() {
-            let _ = fs::remove_file(&old_path);
-        }
-    }
-
     let ext = source
         .extension()
         .and_then(|value| value.to_str())
@@ -411,6 +403,9 @@ fn config_save(app: AppHandle, config: AppConfig) -> Result<AppConfig, AppError>
         }
     })?;
     let saved = store.save_config(config)?;
+    if previous.background_image_path != saved.background_image_path {
+        store.remove_managed_background_file(&previous.background_image_path);
+    }
     if let Err(error) = desktop::refresh_shell_state(&app, &saved) {
         eprintln!("failed to refresh desktop shell state: {error}");
     }

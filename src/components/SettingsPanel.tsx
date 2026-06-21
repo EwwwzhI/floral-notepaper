@@ -7,6 +7,11 @@ import {
   listSystemFonts,
 } from "../features/settings/api";
 import {
+  backgroundDimFromTransparency,
+  backgroundTransparencyPercent,
+  normalizeBackgroundBlur,
+} from "../features/settings/background";
+import {
   formatHeldKeys,
   hotkeyToConfigString,
   isValidGlobalShortcut,
@@ -314,12 +319,48 @@ export function SettingsPanel({ config, onChange, onMigrateDataDir, onClose }: S
             >
               {t("settings.background.choose", { defaultValue: "选择" })}
             </button>
+            {config.backgroundImagePath && (
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.removeItem("backgroundImageName");
+                  setConfigValue("backgroundImagePath", "");
+                }}
+                className="h-8 px-3 rounded-lg border border-paper-deep/45 text-[11px] text-ink-faint hover:text-red-400 hover:bg-danger-bg/70 transition-colors cursor-pointer"
+              >
+                {t("settings.background.clear", { defaultValue: "移除" })}
+              </button>
+            )}
           </div>
-          <SlidingButtonGroup
-            options={backgroundFits}
-            value={config.backgroundFit ?? "cover"}
-            onChange={(value: BackgroundFit) => setConfigValue("backgroundFit", value)}
-          />
+          {config.backgroundImagePath && (
+            <>
+              <SlidingButtonGroup
+                options={backgroundFits}
+                value={config.backgroundFit ?? "cover"}
+                onChange={(value: BackgroundFit) => setConfigValue("backgroundFit", value)}
+              />
+              <BackgroundRangeRow
+                label={t("settings.background.dim", { defaultValue: "透明度" })}
+                value={backgroundTransparencyPercent(config.backgroundDim)}
+                min={0}
+                max={100}
+                step={1}
+                format={(value) => `${value}%`}
+                onChange={(value) =>
+                  setConfigValue("backgroundDim", backgroundDimFromTransparency(value))
+                }
+              />
+              <BackgroundRangeRow
+                label={t("settings.background.blur", { defaultValue: "模糊度" })}
+                value={normalizeBackgroundBlur(config.backgroundBlur)}
+                min={0}
+                max={20}
+                step={1}
+                format={(value) => `${value}px`}
+                onChange={(value) => setConfigValue("backgroundBlur", value)}
+              />
+            </>
+          )}
         </SettingGroup>
       </div>
     </aside>
@@ -397,6 +438,26 @@ function RangeRow({
       <span className="w-10 text-right text-[11px] font-mono text-ink-soft tabular-nums">
         {format(value)}
       </span>
+    </div>
+  );
+}
+
+function BackgroundRangeRow({
+  label,
+  ...rangeProps
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  format: (value: number) => string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-[11px] text-ink-faint">{label}</label>
+      <RangeRow {...rangeProps} />
     </div>
   );
 }

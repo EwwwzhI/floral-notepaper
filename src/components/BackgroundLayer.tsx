@@ -1,5 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useMemo } from "react";
+import { normalizeBackgroundBlur } from "../features/settings/background";
 import type { AppConfig } from "../features/settings/types";
 
 interface BackgroundLayerProps {
@@ -14,7 +15,7 @@ export function BackgroundLayer({ config }: BackgroundLayerProps) {
 
   const fit = config?.backgroundFit ?? "cover";
   const dim = Math.max(0, Math.min(1, config?.backgroundDim ?? 0.25));
-  const blur = Math.max(0, Math.min(20, config?.backgroundBlur ?? 0));
+  const blur = normalizeBackgroundBlur(config?.backgroundBlur);
   const scale = Math.max(0.5, Math.min(2, config?.backgroundScale ?? 1));
   const positionX = Math.max(0, Math.min(100, config?.backgroundPositionX ?? 50));
   const positionY = Math.max(0, Math.min(100, config?.backgroundPositionY ?? 50));
