@@ -33,11 +33,11 @@ src-tauri/gen/
 *PLAN.md
 PLAN*.md
 PROGRESS.md
-AGENTS.md
 CLAUDE.md
 .codex
 *ANALYSIS.md
 .claude
+.agent-memory/
 
 src/assets/fonts/SourceHanSerifSC-Bold.woff2
 

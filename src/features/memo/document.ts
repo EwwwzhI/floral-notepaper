@@ -427,6 +427,7 @@ export function legacyContentToMemoDocument(content: string): MemoDocument {
 }
 
 export function normalizeMemoDocument(document: MemoDocument): MemoDocument {
+  const blockIds = new Set<string>();
   const blocks = document.blocks
     .filter((block) => {
       return (
@@ -436,9 +437,12 @@ export function normalizeMemoDocument(document: MemoDocument): MemoDocument {
       );
     })
     .map((block) => {
-      if (block.type === "image") return block;
+      const id = block.id && !blockIds.has(block.id) ? block.id : createMemoBlockId();
+      blockIds.add(id);
+      if (block.type === "image") return { ...block, id };
       return {
         ...block,
+        id,
         link: normalizeMemoLinkUrl(block.link) ?? undefined,
         formats: parseFormatRanges(block.formats, block.text.length),
       };

@@ -1,5 +1,5 @@
 import chroma from "chroma-js";
-import type { CSSProperties, HTMLAttributes } from "react";
+import type { CSSProperties, HTMLAttributes, Ref } from "react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { parseMemoContent, serializeMemoDocument } from "../features/memo/document";
@@ -20,6 +20,7 @@ export interface TileProps extends Omit<
   noteFontFamily?: string;
   pendingImages?: Record<string, string>;
   onContentChange?: (content: string) => void;
+  tileRef?: Ref<HTMLDivElement>;
 }
 
 const MARK_SIZE = 8;
@@ -82,6 +83,7 @@ export function Tile({
   noteFontFamily,
   pendingImages,
   onContentChange,
+  tileRef,
   className = "",
   style,
   children,
@@ -113,11 +115,15 @@ export function Tile({
 
   return (
     <div
+      ref={tileRef}
       {...divProps}
       className={`app-surface-frame relative border overflow-hidden select-none shadow-[0_1px_8px_var(--color-shadow)] hover:shadow-[0_6px_24px_var(--color-shadow-deep)] ${className}`}
       style={mergedStyle}
     >
-      <div className="px-4 pt-4 pb-4 h-full overflow-y-auto scrollbar-hidden">
+      <div
+        className="px-4 pt-4 pb-4 h-full overflow-y-auto scrollbar-hidden"
+        data-tile-content="true"
+      >
         {title && (
           <div
             className="font-display tracking-wide mb-3 leading-snug"

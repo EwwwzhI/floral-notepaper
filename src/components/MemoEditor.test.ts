@@ -2,7 +2,11 @@
 
 import { Editor } from "@tiptap/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { clipboardPlainText, createMemoEditorExtensions } from "./MemoEditor";
+import {
+  clipboardPlainText,
+  createMemoEditorExtensions,
+  sanitizeClipboardHtml,
+} from "./MemoEditor";
 
 let editor: Editor | null = null;
 
@@ -44,12 +48,27 @@ describe("MemoEditor Tiptap commands", () => {
     ).toBe(true);
   });
 
-  it("serializes mixed paragraphs and task items as useful plain text", () => {
+  it("copies task item text without checkbox markers", () => {
     const wrapper = document.createElement("div");
     wrapper.innerHTML =
       '<p>正文</p><ul data-type="taskList"><li data-type="taskItem" data-checked="false"><div><p>未完成</p></div></li><li data-type="taskItem" data-checked="true"><div><p>已完成</p></div></li></ul>';
 
-    expect(clipboardPlainText(wrapper)).toBe("正文\n\n- [ ] 未完成\n- [x] 已完成");
+    expect(clipboardPlainText(wrapper)).toBe("正文\n\n未完成\n已完成");
+  });
+
+  it("removes task controls and internal ids from copied HTML while preserving content", () => {
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML =
+      '<ul data-type="taskList"><li data-type="taskItem" data-checked="true" data-memo-block-id="todo-1"><label><input type="checkbox" checked></label><div><p><strong>待办文字</strong></p><img src="image.png"></div></li></ul>';
+
+    sanitizeClipboardHtml(wrapper);
+
+    expect(wrapper.textContent).toBe("待办文字");
+    expect(wrapper.querySelector("strong")).not.toBeNull();
+    expect(wrapper.querySelector("img")?.getAttribute("src")).toBe("image.png");
+    expect(wrapper.querySelector("input")).toBeNull();
+    expect(wrapper.querySelector('[data-type="taskItem"]')).toBeNull();
+    expect(wrapper.querySelector("[data-memo-block-id]")).toBeNull();
   });
 
   it("toggles selected paragraphs into a task list", () => {

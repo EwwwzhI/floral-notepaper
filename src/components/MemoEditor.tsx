@@ -214,9 +214,8 @@ export function clipboardPlainText(wrapper: HTMLElement): string {
       if (element.matches('ul[data-type="taskList"]')) {
         return Array.from(element.querySelectorAll(':scope > li[data-type="taskItem"]'))
           .map((item) => {
-            const checked = item.getAttribute("data-checked") === "true";
             const body = item.querySelector(":scope > div")?.textContent ?? item.textContent ?? "";
-            return `- [${checked ? "x" : " "}] ${body}`;
+            return body;
           })
           .join("\n");
       }
@@ -225,6 +224,30 @@ export function clipboardPlainText(wrapper: HTMLElement): string {
     })
     .filter(Boolean)
     .join("\n\n");
+}
+
+export function sanitizeClipboardHtml(wrapper: HTMLElement): void {
+  for (const taskList of Array.from(
+    wrapper.querySelectorAll<HTMLElement>('ul[data-type="taskList"]'),
+  )) {
+    const fragment = document.createDocumentFragment();
+    for (const item of Array.from(
+      taskList.querySelectorAll<HTMLElement>(':scope > li[data-type="taskItem"]'),
+    )) {
+      const body = item.querySelector<HTMLElement>(":scope > div");
+      if (body) {
+        while (body.firstChild) fragment.appendChild(body.firstChild);
+      } else if (item.textContent) {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = item.textContent;
+        fragment.appendChild(paragraph);
+      }
+    }
+    taskList.replaceWith(fragment);
+  }
+  wrapper
+    .querySelectorAll("[data-memo-block-id]")
+    .forEach((element) => element.removeAttribute("data-memo-block-id"));
 }
 
 async function blobDataUrl(blob: Blob): Promise<string> {
@@ -241,6 +264,7 @@ async function selectedClipboard(editor: Editor): Promise<{ html: string; text: 
   const wrapper = document.createElement("div");
   wrapper.appendChild(DOMSerializer.fromSchema(editor.schema).serializeFragment(slice.content));
   const text = clipboardPlainText(wrapper);
+  sanitizeClipboardHtml(wrapper);
   await Promise.all(
     Array.from(wrapper.querySelectorAll("img")).map(async (image) => {
       try {

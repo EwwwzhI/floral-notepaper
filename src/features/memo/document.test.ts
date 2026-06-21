@@ -60,6 +60,22 @@ describe("memo document", () => {
     expect(memoPlainText(content)).toBe("买菜\n带环保袋");
   });
 
+  test("repairs duplicate block ids so tile todo updates remain isolated", () => {
+    const content = `${MEMO_CONTENT_PREFIX}${JSON.stringify({
+      version: 1,
+      blocks: [
+        { id: "duplicate", type: "todo", text: "第一项", checked: false },
+        { id: "duplicate", type: "todo", text: "第二项", checked: false },
+      ],
+    })}`;
+
+    const blocks = parseMemoContent(content).blocks;
+
+    expect(blocks[0].id).toBe("duplicate");
+    expect(blocks[1].id).not.toBe("duplicate");
+    expect(new Set(blocks.map((block) => block.id))).toHaveLength(2);
+  });
+
   test("applies formatting only to the selected text and keeps ranges while editing", () => {
     const block = {
       id: "text-1",

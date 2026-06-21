@@ -17,7 +17,7 @@ import type { Note, NoteMetadata, NotesChangedEvent } from "../features/notes/ty
 import { shouldReloadOpenNote } from "../features/notes/sync";
 import { countNoteChars, metadataFromNote } from "../features/notes/noteUtils";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import {
   animateCurrentWindowBounds,
   closeCurrentWindow,
@@ -39,6 +39,7 @@ import {
 import type { AppConfig, TileColorMode } from "../features/settings/types";
 import {
   NOTE_SURFACE_MODE_EVENT,
+  getAutoSizedTileBounds,
   getSurfaceTargetBounds,
   surfaceModeFromEvent,
 } from "../features/windows/surfaceMode";
@@ -167,6 +168,8 @@ export function NotePad({
   const [isExiting, setIsExiting] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const memoEditorRef = useRef<MemoEditorHandle | null>(null);
+  const tileRef = useRef<HTMLDivElement>(null);
+  const shouldAutoSizeTileRef = useRef(initialSurfaceMode === "tile");
   const contentValueRef = useRef(content);
   contentValueRef.current = content;
   const titleValueRef = useRef(title);
@@ -490,6 +493,9 @@ export function NotePad({
   const switchSurfaceMode = useCallback(
     async (nextMode: NoteSurfaceMode) => {
       const unpinnedNoteId = tileSurfaceModeUnpinNoteId(surfaceMode, nextMode, tileNoteId);
+      if (nextMode === "tile" && surfaceMode !== "tile") {
+        shouldAutoSizeTileRef.current = true;
+      }
       setSurfaceMode(nextMode);
       if (unpinnedNoteId) {
         void emitTileWindowUnpinned(unpinnedNoteId).catch(() => undefined);
@@ -504,6 +510,57 @@ export function NotePad({
     },
     [surfaceMode, tileNoteId],
   );
+
+  useEffect(() => {
+    if (
+      surfaceMode !== "tile" ||
+      !shouldAutoSizeTileRef.current ||
+      (initialNoteId && !editingNoteId)
+    ) {
+      return undefined;
+    }
+
+    shouldAutoSizeTileRef.current = false;
+    let cancelled = false;
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const tile = tileRef.current;
+        const contentElement = tile?.querySelector<HTMLElement>('[data-tile-content="true"]');
+        const lastContent = contentElement?.lastElementChild;
+        if (!tile || !contentElement || !(lastContent instanceof HTMLElement)) return;
+
+        const tileTop = tile.getBoundingClientRect().top;
+        const contentBottom = lastContent.getBoundingClientRect().bottom;
+        const halfLine = surfaceFontSize * 0.85;
+        const contentHeight = Math.ceil(contentBottom - tileTop + halfLine + 1);
+        const appWindow = getCurrentWindow();
+
+        void Promise.all([getCurrentWindowBounds(), appWindow.scaleFactor(), currentMonitor()])
+          .then(([currentBounds, scaleFactor, monitor]) => {
+            if (cancelled) return;
+            const workArea = monitor
+              ? {
+                  x: monitor.workArea.position.x,
+                  y: monitor.workArea.position.y,
+                  width: monitor.workArea.size.width,
+                  height: monitor.workArea.size.height,
+                }
+              : undefined;
+            return animateCurrentWindowBounds(
+              getAutoSizedTileBounds(currentBounds, contentHeight, scaleFactor, workArea),
+            );
+          })
+          .catch((error) => {
+            if (!cancelled) showToast(getErrorMessage(error));
+          });
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [editingNoteId, initialNoteId, surfaceFontSize, surfaceMode]);
 
   useEffect(() => {
     function handleSurfaceModeRequest(event: Event) {
@@ -643,6 +700,7 @@ export function NotePad({
     <div className={surfaceWrapperClassName}>
       {isTile ? (
         <Tile
+          tileRef={tileRef}
           title={tileTitle || undefined}
           content={content}
           color={tileColor}

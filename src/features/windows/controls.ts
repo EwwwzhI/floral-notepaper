@@ -74,6 +74,14 @@ export async function animateCurrentWindowBounds(
   durationMs = 180,
 ): Promise<void> {
   const start = await getCurrentWindowBounds();
+  if (
+    start.x === target.x &&
+    start.y === target.y &&
+    start.width === target.width &&
+    start.height === target.height
+  ) {
+    return;
+  }
   const raf = globalThis.requestAnimationFrame;
 
   if (!raf || durationMs <= 0) {
